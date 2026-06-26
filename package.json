@@ -1,0 +1,16 @@
+{
+  "name": "agente-crypto-telegram",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "ccxt": "^4.5.60",
+    "dotenv": "^16.3.0",
+    "grammy": "^1.19.0",
+    "node-cron": "^4.5.0"
+  }
+}
