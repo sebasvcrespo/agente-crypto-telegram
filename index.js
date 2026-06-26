@@ -18,7 +18,7 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
-const exchange = new ccxt.bybit();
+const exchange = new ccxt.kucoin();
 
 let botStatus = "Cerrado";
 let chatId = null;
