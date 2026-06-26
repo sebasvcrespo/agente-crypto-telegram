@@ -1,0 +1,84 @@
+Starting Container
+npm warn config production Use `--omit=dev` instead.
+> agente-crypto-telegram@1.0.0 start
+> node index.js
+/app/node_modules/grammy/out/bot.js:101
+            throw new Error("Empty token!");
+                  ^
+Error: Empty token!
+    at new Bot (/app/node_modules/grammy/out/bot.js:101:19)
+    at file:///app/index.js:20:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v22.22.3
+npm warn config production Use `--omit=dev` instead.
+> agente-crypto-telegram@1.0.0 start
+> node index.js
+/app/node_modules/grammy/out/bot.js:101
+            throw new Error("Empty token!");
+                  ^
+Error: Empty token!
+    at new Bot (/app/node_modules/grammy/out/bot.js:101:19)
+    at file:///app/index.js:20:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v22.22.3
+npm warn config production Use `--omit=dev` instead.
+> agente-crypto-telegram@1.0.0 start
+> node index.js
+/app/node_modules/grammy/out/bot.js:101
+            throw new Error("Empty token!");
+                  ^
+Error: Empty token!
+    at new Bot (/app/node_modules/grammy/out/bot.js:101:19)
+    at file:///app/index.js:20:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v22.22.3
+npm warn config production Use `--omit=dev` instead.
+> agente-crypto-telegram@1.0.0 start
+> node index.js
+/app/node_modules/grammy/out/bot.js:101
+            throw new Error("Empty token!");
+                  ^
+Error: Empty token!
+    at new Bot (/app/node_modules/grammy/out/bot.js:101:19)
+    at file:///app/index.js:20:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v22.22.3
+npm warn config production Use `--omit=dev` instead.
+> agente-crypto-telegram@1.0.0 start
+> node index.js
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v22.22.3
+/app/node_modules/grammy/out/bot.js:101
+            throw new Error("Empty token!");
+                  ^
+Error: Empty token!
+    at new Bot (/app/node_modules/grammy/out/bot.js:101:19)
+    at file:///app/index.js:20:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+npm warn config production Use `--omit=dev` instead.
+> agente-crypto-telegram@1.0.0 start
+> node index.js
+Error: Empty token!
+    at new Bot (/app/node_modules/grammy/out/bot.js:101:19)
+    at file:///app/index.js:20:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v22.22.3
+/app/node_modules/grammy/out/bot.js:101
+            throw new Error("Empty token!");
+                  ^
+npm warn config production Use `--omit=dev` instead.
+> agente-crypto-telegram@1.0.0 start
+> node index.js
+/app/node_modules/grammy/out/bot.js:101
+            throw new Error("Empty token!");

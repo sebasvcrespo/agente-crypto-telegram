@@ -18,7 +18,7 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
-const exchange = new ccxt.binance();
+const exchange = new ccxt.bybit();
 
 let botStatus = "Cerrado";
 let chatId = null;
@@ -79,40 +79,32 @@ async function analyzeWithAI(indicatorsText) {
       messages: [
         {
           role: "user",
-          content: `Eres un trader profesional de criptomonedas. Analiza los siguientes datos de BTCUSDT siguiendo ESTRICTAMENTE el protocolo de trading que se te proporciona.
+          content: `Eres un trader profesional de criptomonedas. Analiza los siguientes datos de BTCUSDT siguiendo ESTRICTAMENTE el protocolo de trading.
 
 DATOS DEL MERCADO:
 ${indicatorsText}
 
-PROTOCOLO DE TRADING (debes seguirlo al pie de la letra):
+PROTOCOLO DE TRADING:
 ${protocolo}
 
 INSTRUCCIONES:
-1. Analiza los datos siguiendo el checklist del punto 12 del protocolo
-2. Determina si es LONG, SHORT o NO TRADE basado en las condiciones del protocolo
-3. Si es NO TRADE, explica brevemente qué condición no se cumplió
-4. Si es LONG o SHORT, calcula toda la configuración según el protocolo (SL estructural + ATR, rango, grids, leverage por convicción, tamaño de posición, etc.)
-5. NO uses porcentajes de capital fijos arbitrarios — usa el sistema de escalado del punto 4
-6. NO muestres números intermedios ni cálculos preliminares en la tabla final
+1. Sigue el checklist del punto 12 del protocolo
+2. Determina: BOT LONG, BOT SHORT o NO TRADE
+3. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+4. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
+5. NO muestres capital ni cálculos intermedios
 
-RESPONDE EN ESPAÑOL.
+RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
-Formato de respuesta:
-- Primero: un párrafo breve (máximo 3 líneas) con el contexto de BTC, estructura de mercado y señal dominante
-- Luego: si es LONG o SHORT, la tabla de configuración del punto 7 del protocolo. Si es NO TRADE, explica por qué.
+✅ BOT LONG (o ❌ BOT SHORT)
+• Entry: $XX.XXX
+• SL: $XX.XXX
+• TP: $XX.XXX
+• Range: $XX.XXX - $XX.XXX
+• Grids: XX
+• Leverage: Xx
 
-La tabla debe ser exactamente como el punto 7 del protocolo:
-|                      | Bot Grid              | Futures        |
-|----------------------|----------------------|----------------|
-|% del capital         |[% final]             |[% final]       |
-|Leverage              |[final]x              |[final]x        |
-|Entry                 |—                     |—               |
-|Lower/Upper = SL      |[$ SL]                |[$ SL]          |
-|Upper/Lower = TP      |—                     |$ TP1 / $ TP2   |
-|Grids                 |[número final]        |N/A             |
-|Break Even            |N/A                   |[$ trigger]     |
-
-Si la recomendación es LONG: Lower = SL, Upper = TP. Si es SHORT: Upper = SL, Lower = TP.`
+Si la recomendación es LONG: SL es el límite inferior, TP el superior. Si es SHORT: SL es el límite superior, TP el inferior.`
         }
       ]
     },
@@ -231,7 +223,7 @@ bot.on("message:photo", async (ctx) => {
             content: [
               {
                 type: "text",
-                text: `Eres un trader profesional. Analiza este gráfico siguiendo este protocolo:\n\n${protocolo}\n\nDa un breve análisis + tabla de configuración del punto 7 en español.`
+                text: `Eres un trader profesional. Analiza este gráfico siguiendo este protocolo:\n\n${protocolo}\n\nDetermina: ✅ BOT LONG, ❌ BOT SHORT o ❌ NO TRADE. Si es LONG/SHORT da: Entry, SL, TP, Range, Grids, Leverage. Máximo 10 líneas. Español.`
               },
               {
                 type: "image_url",
