@@ -149,6 +149,7 @@ export function calculateSellBuyRate(open, high, low, close, volume, period = 34
 }
 
 export function getLatestIndicators(ohlcv1h, ohlcv4h) {
+  console.log(`📐 Indicators: 1h=${ohlcv1h.length} velas, 4h=${ohlcv4h.length} velas`);
   const extract = (data, idx) => data.map(d => d[idx]);
 
   const o1 = extract(ohlcv1h, 1), h1 = extract(ohlcv1h, 2),

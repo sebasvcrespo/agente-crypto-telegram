@@ -44,10 +44,20 @@ let chatId = null;
 
 const protocolo = fs.readFileSync(path.join(__dirname, "protocolo.txt"), "utf-8");
 
+function decimalsForPrice(price) {
+  if (price < 0.001) return 8;
+  if (price < 0.01) return 6;
+  if (price < 0.1) return 5;
+  if (price < 1) return 4;
+  if (price < 10) return 3;
+  return 2;
+}
+
 function formatIndicatorsText(data) {
   const bb = data.bb_4h;
+  const dec = decimalsForPrice(data.precio);
   const bbLine = bb
-    ? `BB 4H > Upper: ${bb.upper.toFixed(0)} | Mid: ${bb.middle.toFixed(0)} | Lower: ${bb.lower.toFixed(0)}`
+    ? `BB 4H > Upper: ${bb.upper.toFixed(dec)} | Mid: ${bb.middle.toFixed(dec)} | Lower: ${bb.lower.toFixed(dec)}`
     : "BB 4H: N/A";
 
   const r1 = data.rsi["1h"]?.toFixed(1) ?? "N/A";
@@ -58,13 +68,13 @@ function formatIndicatorsText(data) {
   const adx1 = a1 ? `ADX ${a1.adx} | DI+ ${a1.diPlus} | DI- ${a1.diMinus}` : "N/A";
   const adx4 = a4 ? `ADX ${a4.adx} | DI+ ${a4.diPlus} | DI- ${a4.diMinus}` : "N/A";
 
-  const at1 = data.atr["1h"] ? `${data.atr["1h"].toFixed(1)} (${data.atr["1h_pct"]})` : "N/A";
-  const at4 = data.atr["4h"] ? `${data.atr["4h"].toFixed(1)} (${data.atr["4h_pct"]})` : "N/A";
+  const at1 = data.atr["1h"] ? `${data.atr["1h"].toFixed(dec)} (${data.atr["1h_pct"]})` : "N/A";
+  const at4 = data.atr["4h"] ? `${data.atr["4h"].toFixed(dec)} (${data.atr["4h_pct"]})` : "N/A";
 
   const sbr = data.sellBuyRate !== null ? data.sellBuyRate.toFixed(2) : "N/A";
 
-  return `
-PRECIO ACTUAL: $${data.precio.toFixed(2)} (1H) | $${data.precio4h.toFixed(2)} (4H)
+  const output = `
+PRECIO ACTUAL: $${data.precio.toFixed(dec)} (1H) | $${data.precio4h.toFixed(dec)} (4H)
 HORA (UTC): ${data.timestamp}
 
 --- INDICADORES 1H ---
@@ -82,17 +92,21 @@ ${bbLine}
 Valor: ${sbr}
 ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : "→ Presión VENDEDORA dominante") : ""}
 `;
+  return output;
 }
 
 async function fetchMarketDataForPair(symbol, isFutures = true) {
   const ex = isFutures ? futuresExchange : spotExchange;
+  const exchangeName = isFutures ? "KuCoin Futures" : "KuCoin Spot";
   const ohlcv1h = await ex.fetchOHLCV(symbol, "1h", undefined, 100);
   const ohlcv4h = await ex.fetchOHLCV(symbol, "4h", undefined, 100);
+  console.log(`📊 ${exchangeName} ${symbol}: 1h=${ohlcv1h.length} velas, 4h=${ohlcv4h.length} velas`);
   return { ohlcv1h, ohlcv4h };
 }
 
 async function fetchMarketData() {
-  return fetchMarketDataForPair("BTC/USDT:USDT");
+  const result = await fetchBestEffort("BTC");
+  return result.data;
 }
 
 function symbolsForPair(base) {
@@ -107,7 +121,7 @@ async function fetchBestEffort(base) {
     const data = await fetchMarketDataForPair(futuresSymbol, true);
     return { data, market: "futuros", symbol: futuresSymbol };
   } catch (e) {
-    console.log(`⚠️ ${futuresSymbol} no disponible en futuros, usando spot`);
+    console.log(`⚠️ ${futuresSymbol} en futuros FALLÓ: ${e.message}. Usando spot ${spotSymbol}...`);
     const data = await fetchMarketDataForPair(spotSymbol, false);
     return { data, market: "spot", symbol: spotSymbol };
   }
