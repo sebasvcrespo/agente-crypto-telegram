@@ -1,10 +1,5 @@
 import http from "http";
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Bot running\n');
-}).listen(process.env.PORT || 3000);
-
-import { Bot } from "grammy";
+import { Bot, GrammyError, HttpError } from "grammy";
 import dotenv from "dotenv";
 import axios from "axios";
 import cron from "node-cron";
@@ -16,9 +11,33 @@ import { getLatestIndicators } from "./indicators.js";
 
 dotenv.config();
 
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled Rejection:", reason instanceof Error ? reason.message : reason);
+  if (reason instanceof Error && reason.stack) {
+    console.error(reason.stack);
+  }
+});
+
+const REQUIRED_ENV = ["TELEGRAM_BOT_TOKEN", "OPENROUTER_API_KEY"];
+for (const key of REQUIRED_ENV) {
+  if (!process.env[key]) {
+    console.error(`❌ FALTA variable de entorno: ${key}`);
+    console.error("Debes configurarla en Render -> Environment -> Environment Variables");
+    process.exit(1);
+  }
+}
+
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot running\n');
+}).listen(process.env.PORT || 3000, () => {
+  console.log(`🌐 HTTP server listening on port ${process.env.PORT || 3000}`);
+});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
-const exchange = new ccxt.kucoin();
+const futuresExchange = new ccxt.kucoinfutures();
+const spotExchange = new ccxt.kucoin();
 
 let botStatus = "Cerrado";
 let chatId = null;
@@ -65,10 +84,33 @@ ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : 
 `;
 }
 
-async function fetchMarketData() {
-  const ohlcv1h = await exchange.fetchOHLCV("BTC/USDT", "1h", undefined, 100);
-  const ohlcv4h = await exchange.fetchOHLCV("BTC/USDT", "4h", undefined, 100);
+async function fetchMarketDataForPair(symbol, isFutures = true) {
+  const ex = isFutures ? futuresExchange : spotExchange;
+  const ohlcv1h = await ex.fetchOHLCV(symbol, "1h", undefined, 100);
+  const ohlcv4h = await ex.fetchOHLCV(symbol, "4h", undefined, 100);
   return { ohlcv1h, ohlcv4h };
+}
+
+async function fetchMarketData() {
+  return fetchMarketDataForPair("BTC/USDT:USDT");
+}
+
+function symbolsForPair(base) {
+  const futuresSymbol = `${base}/USDT:USDT`;
+  const spotSymbol = `${base}/USDT`;
+  return { futuresSymbol, spotSymbol };
+}
+
+async function fetchBestEffort(base) {
+  const { futuresSymbol, spotSymbol } = symbolsForPair(base);
+  try {
+    const data = await fetchMarketDataForPair(futuresSymbol, true);
+    return { data, market: "futuros", symbol: futuresSymbol };
+  } catch (e) {
+    console.log(`⚠️ ${futuresSymbol} no disponible en futuros, usando spot`);
+    const data = await fetchMarketDataForPair(spotSymbol, false);
+    return { data, market: "spot", symbol: spotSymbol };
+  }
 }
 
 async function analyzeWithAI(indicatorsText) {
@@ -122,19 +164,120 @@ Si la recomendación es LONG: SL es el límite inferior, TP el superior. Si es S
   return response.data.choices[0].message.content;
 }
 
+async function openRouterChat(messages) {
+  const response = await axios.post(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      model: "google/gemini-2.5-flash",
+      messages
+    },
+    {
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://localhost",
+        "X-Title": "Crypto Telegram Agent"
+      },
+      timeout: 60000
+    }
+  );
+  return response.data.choices[0].message.content;
+}
+
+function normalizeSymbol(text) {
+  let s = text.replace(/^\//, "").toUpperCase();
+  s = s.replace(/USDT\s*$/, "").trim();
+  if (!s) return null;
+  return s;
+}
+
+async function analyzePair(base) {
+  console.log(`🔍 Analizando par: ${base}`);
+
+  const [btcResult, pairResult] = await Promise.all([
+    fetchBestEffort("BTC"),
+    fetchBestEffort(base)
+  ]);
+
+  const btcIndicators = getLatestIndicators(btcResult.data.ohlcv1h, btcResult.data.ohlcv4h);
+  const pairIndicators = getLatestIndicators(pairResult.data.ohlcv1h, pairResult.data.ohlcv4h);
+  const btcText = formatIndicatorsText(btcIndicators);
+  const pairText = formatIndicatorsText(pairIndicators);
+
+  const content = `Eres un trader profesional de criptomonedas.
+
+--- CONTEXTO BTC (solo informativo, sin recomendación) ---
+${btcText}
+
+--- ANÁLISIS DEL PAR ${pairResult.symbol} (${pairResult.market}) ---
+${pairText}
+
+PROTOCOLO DE TRADING:
+${protocolo}
+
+INSTRUCCIONES:
+1. Primero da un breve panorama de BTC (2-3 líneas, solo contexto, sin recomendación de trade)
+2. Luego analiza ${pairResult.symbol} siguiendo ESTRICTAMENTE el protocolo (punto 12 del checklist)
+3. Determina: BOT LONG, BOT SHORT o NO TRADE
+4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+5. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
+6. NO muestres capital ni cálculos intermedios
+
+RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del par:
+
+✅ BOT LONG (o ❌ BOT SHORT)
+• Entry: $XX.XXX
+• SL: $XX.XXX
+• TP: $XX.XXX
+• Range: $XX.XXX - $XX.XXX
+• Grids: XX
+• Leverage: Xx
+
+Si la recomendación es LONG: SL es el límite inferior, TP el superior. Si es SHORT: SL es el límite superior, TP el inferior.`;
+
+  return openRouterChat([{ role: "user", content }]);
+}
+
+async function chatWithAI(userMessage) {
+  console.log("💬 Chat libre con IA...");
+
+  const btcData = await fetchMarketData();
+  const btcIndicators = getLatestIndicators(btcData.ohlcv1h, btcData.ohlcv4h);
+  const btcText = formatIndicatorsText(btcIndicators);
+
+  const content = `Eres un asistente trader experto en criptomonedas. Respondes preguntas sobre crypto, trading, análisis técnico, etc.
+
+DATOS ACTUALES DE BTC/USDT (para contexto de mercado):
+${btcText}
+
+El usuario pregunta:
+${userMessage}
+
+Responde de forma útil, clara y concisa. Si te pregunta sobre un par específico del que no tienes datos, usa tu conocimiento general. Si puedes dar contexto de precios actuales basado en los datos de BTC, hazlo.`;
+
+  return openRouterChat([{ role: "user", content }]);
+}
+
 async function sendSafeTelegram(text) {
-  if (!chatId) return;
+  if (!chatId) {
+    console.warn("⚠️ sendSafeTelegram: no hay chatId, mensaje no enviado");
+    return;
+  }
   const LIMIT = 4000;
-  if (text.length <= LIMIT) {
-    await bot.api.sendMessage(chatId, text);
-  } else {
-    await bot.api.sendMessage(chatId, text.substring(0, LIMIT) + "\n\n*(Análisis recortado por límite de caracteres)*");
+  try {
+    if (text.length <= LIMIT) {
+      await bot.api.sendMessage(chatId, text);
+    } else {
+      await bot.api.sendMessage(chatId, text.substring(0, LIMIT) + "\n\n*(Análisis recortado por límite de caracteres)*");
+    }
+  } catch (err) {
+    console.error("❌ Error al enviar mensaje a Telegram:", err.message);
   }
 }
 
 async function runHourlyAnalysis() {
   if (botStatus === "Abierto" || !chatId) {
-    console.log(`⏭️ Skip: status=${botStatus}, chatId=${chatId}`);
+    console.log(`⏭️ Análisis automático saltado: status="${botStatus}", chatId="${chatId}"`);
     return;
   }
 
@@ -163,42 +306,88 @@ async function runHourlyAnalysis() {
 
 cron.schedule("0 * * * *", () => {
   console.log("⏰ Cron ejecutándose...");
-  runHourlyAnalysis();
+  runHourlyAnalysis().catch((err) => {
+    console.error("❌ Error en cron de análisis:", err.message);
+  });
 });
 
+const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL;
+if (selfUrl) {
+  cron.schedule("*/10 * * * *", () => {
+    axios.get(selfUrl).then(() => {
+      console.log("🏓 Auto-ping exitoso a", selfUrl);
+    }).catch((err) => {
+      console.error("❌ Auto-ping falló:", err.message);
+    });
+  });
+  console.log(`🏓 Auto-ping cada 10 min activado para: ${selfUrl}`);
+} else {
+  console.warn("⚠️ Auto-ping desactivado: define RENDER_EXTERNAL_URL o SELF_URL");
+}
+
 bot.command("start", async (ctx) => {
-  chatId = ctx.chat.id;
-  await ctx.reply(
-    "🤖 *Bot Analista Crypto Activo*\n\n" +
-    "Comandos disponibles:\n" +
-    "• `Cerrado` — Activa el análisis automático cada hora\n" +
-    "• `Abierto` — Pausa el análisis (cuando tengas un bot ejecutando)\n" +
-    "• Envíame una captura para análisis manual\n\n" +
-    `Estado actual: *${botStatus}*`,
-    { parse_mode: "Markdown" }
-  );
+  try {
+    chatId = ctx.chat.id;
+    await ctx.reply(
+      "🤖 *Bot Analista Crypto Activo*\n\n" +
+      "*Comandos:*\n" +
+      "• `/TICKER` — Ej: `/ETH` `/COOKIEUSDT` — Analiza cualquier par con contexto BTC\n" +
+      "• `Cerrado` — Activa el análisis automático de BTC cada hora\n" +
+      "• `Abierto` — Pausa el análisis automático\n" +
+      "• Envíame una captura — Analiza el gráfico manualmente\n" +
+      "• Cualquier texto — Pregúntame sobre crypto\n\n" +
+      `Estado actual: *${botStatus}*`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (error) {
+    console.error("❌ Error en comando /start:", error.message);
+  }
 });
 
 bot.on("message:text", async (ctx) => {
-  chatId = ctx.chat.id;
-  const text = ctx.message.text.trim().toLowerCase();
+  try {
+    chatId = ctx.chat.id;
+    const rawText = ctx.message.text.trim();
+    const text = rawText.toLowerCase();
 
-  if (text === "abierto") {
-    botStatus = "Abierto";
-    await ctx.reply("🔒 *Modo Abierto* — Análisis automático pausado.\n\nCuando cierres tu bot, escribe *Cerrado* para reanudar.", { parse_mode: "Markdown" });
-    console.log("🔒 Bot status cambiado a: Abierto");
-    return;
+    if (text.startsWith("/")) {
+      const symbol = normalizeSymbol(rawText);
+      if (!symbol) {
+        await ctx.reply("❌ Formato inválido. Usa por ejemplo: \`/ETH\`, \`/COOKIEUSDT\`", { parse_mode: "Markdown" });
+        return;
+      }
+      await ctx.reply(`🔍 Analizando ${symbol}USDT con contexto de BTC...\n\nEsto puede tomar hasta 30 segundos.`);
+      const analysis = await analyzePair(symbol);
+      await ctx.reply(analysis);
+      return;
+    }
+
+    if (text === "abierto") {
+      botStatus = "Abierto";
+      await ctx.reply("🔒 *Modo Abierto* — Análisis automático pausado.\n\nCuando cierres tu bot, escribe *Cerrado* para reanudar.", { parse_mode: "Markdown" });
+      console.log("🔒 Bot status cambiado a: Abierto");
+      return;
+    }
+
+    if (text === "cerrado") {
+      botStatus = "Cerrado";
+      await ctx.reply("🔓 *Modo Cerrado* — Análisis automático activado.\n\nCada hora analizaré BTCUSDT y te enviaré la configuración.", { parse_mode: "Markdown" });
+      console.log("🔓 Bot status cambiado a: Cerrado");
+      await runHourlyAnalysis();
+      return;
+    }
+
+    console.log("💬 Chat libre detectado:", rawText.slice(0, 50));
+    const reply = await chatWithAI(rawText);
+    await ctx.reply(reply);
+  } catch (error) {
+    console.error("❌ Error en handler message:text:", error.message);
+    if (error.message && error.message.includes("does not have market")) {
+      await ctx.reply("❌ Ese par no existe en KuCoin. Verifica el ticker e intenta de nuevo.");
+    } else {
+      await ctx.reply("⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo.");
+    }
   }
-
-  if (text === "cerrado") {
-    botStatus = "Cerrado";
-    await ctx.reply("🔓 *Modo Cerrado* — Análisis automático activado.\n\nCada hora analizaré BTCUSDT y te enviaré la configuración.", { parse_mode: "Markdown" });
-    console.log("🔓 Bot status cambiado a: Cerrado");
-    runHourlyAnalysis();
-    return;
-  }
-
-  await ctx.reply("Comando no reconocido. Usa *Abierto* o *Cerrado* para controlar el análisis automático, o envía una captura de pantalla.", { parse_mode: "Markdown" });
 });
 
 bot.on("message:photo", async (ctx) => {
@@ -258,4 +447,18 @@ bot.on("message:photo", async (ctx) => {
 
 console.log("🚀 Bot analista crypto iniciado. Esperando mensajes...");
 console.log(`Estado inicial: ${botStatus}`);
-bot.start();
+bot.catch((err) => {
+  console.error("❌ Error en polling de Telegram:");
+  console.error("  Mensaje:", err.message);
+  if (err.error instanceof GrammyError) {
+    console.error("  Descripción:", err.error.description);
+    console.error("  Código:", err.error.errorCode);
+  } else if (err.error instanceof HttpError) {
+    console.error("  HTTP error");
+  }
+});
+
+bot.start().catch((err) => {
+  console.error("❌ Error al iniciar el bot (posible token inválido):", err.message);
+  console.error("Verifica que TELEGRAM_BOT_TOKEN esté bien configurado en Render");
+});
