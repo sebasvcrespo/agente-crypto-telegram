@@ -7,7 +7,7 @@ import ccxt from "ccxt";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { getLatestIndicators } from "./indicators.js";
+import { getLatestIndicators, getIndicatorsForTimeframe } from "./indicators.js";
 
 dotenv.config();
 
@@ -95,17 +95,21 @@ ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : 
   return output;
 }
 
-async function fetchMarketDataForPair(symbol, isFutures = true) {
+async function fetchMarketDataForPair(symbol, isFutures = true, timeframes = ["1h", "4h"]) {
   const ex = isFutures ? futuresExchange : spotExchange;
   const exchangeName = isFutures ? "KuCoin Futures" : "KuCoin Spot";
-  const ohlcv1h = await ex.fetchOHLCV(symbol, "1h", undefined, 100);
-  const ohlcv4h = await ex.fetchOHLCV(symbol, "4h", undefined, 100);
-  console.log(`📊 ${exchangeName} ${symbol}: 1h=${ohlcv1h.length} velas, 4h=${ohlcv4h.length} velas`);
-  return { ohlcv1h, ohlcv4h };
+  
+  const results = {};
+  for (const tf of timeframes) {
+    const ohlcv = await ex.fetchOHLCV(symbol, tf, undefined, 100);
+    console.log(`📊 ${exchangeName} ${symbol}: ${tf}=${ohlcv.length} velas`);
+    results[tf] = ohlcv;
+  }
+  return results;
 }
 
-async function fetchMarketData() {
-  const result = await fetchBestEffort("BTC");
+async function fetchMarketData(timeframes = ["1h", "4h"]) {
+  const result = await fetchBestEffort("BTC", timeframes);
   return result.data;
 }
 
@@ -115,27 +119,59 @@ function symbolsForPair(base) {
   return { futuresSymbol, spotSymbol };
 }
 
-async function fetchBestEffort(base) {
+async function fetchBestEffort(base, timeframes = ["1h", "4h"]) {
   const { futuresSymbol, spotSymbol } = symbolsForPair(base);
   try {
-    const data = await fetchMarketDataForPair(futuresSymbol, true);
+    const data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
     return { data, market: "futuros", symbol: futuresSymbol };
   } catch (e) {
     console.log(`⚠️ ${futuresSymbol} en futuros FALLÓ: ${e.message}. Usando spot ${spotSymbol}...`);
-    const data = await fetchMarketDataForPair(spotSymbol, false);
+    const data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
     return { data, market: "spot", symbol: spotSymbol };
   }
 }
 
+const CLAUDE_MODELS = [
+  "anthropic/claude-3-5-sonnet",
+  "anthropic/claude-3-7-sonnet",
+  "google/gemini-2.5-flash"
+];
+
+async function tryWithFallback(messages, modelIndex = 0) {
+  if (modelIndex >= CLAUDE_MODELS.length) {
+    throw new Error("All models failed");
+  }
+  
+  try {
+    console.log(`🧠 Usando modelo: ${CLAUDE_MODELS[modelIndex]}`);
+    const response = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        model: CLAUDE_MODELS[modelIndex],
+        messages
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://localhost",
+          "X-Title": "Crypto Telegram Agent"
+        },
+        timeout: 60000
+      }
+    );
+    return response.data.choices[0].message.content;
+  } catch (error) {
+    console.warn(`⚠️ Modelo ${CLAUDE_MODELS[modelIndex]} falló, intentando siguiente...`);
+    return tryWithFallback(messages, modelIndex + 1);
+  }
+}
+
 async function analyzeWithAI(indicatorsText) {
-  const response = await axios.post(
-    "https://openrouter.ai/api/v1/chat/completions",
+  return tryWithFallback([
     {
-      model: "google/gemini-2.5-flash",
-      messages: [
-        {
-          role: "user",
-          content: `Eres un trader profesional de criptomonedas. Analiza los siguientes datos de BTCUSDT siguiendo ESTRICTAMENTE el protocolo de trading.
+      role: "user",
+      content: `Eres un trader profesional de criptomonedas. Analiza los siguientes datos de BTCUSDT siguiendo ESTRICTAMENTE el protocolo de trading.
 
 DATOS DEL MERCADO:
 ${indicatorsText}
@@ -161,41 +197,12 @@ RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 • Leverage: Xx
 
 Si la recomendación es LONG: SL es el límite inferior, TP el superior. Si es SHORT: SL es el límite superior, TP el inferior.`
-        }
-      ]
-    },
-    {
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://localhost",
-        "X-Title": "Crypto Telegram Agent"
-      },
-      timeout: 60000
     }
-  );
-
-  return response.data.choices[0].message.content;
+  ]);
 }
 
 async function openRouterChat(messages) {
-  const response = await axios.post(
-    "https://openrouter.ai/api/v1/chat/completions",
-    {
-      model: "google/gemini-2.5-flash",
-      messages
-    },
-    {
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://localhost",
-        "X-Title": "Crypto Telegram Agent"
-      },
-      timeout: 60000
-    }
-  );
-  return response.data.choices[0].message.content;
+  return tryWithFallback(messages);
 }
 
 function normalizeSymbol(text) {
@@ -205,16 +212,16 @@ function normalizeSymbol(text) {
   return s;
 }
 
-async function analyzePair(base) {
+async function analyzePair(base, timeframes = ["1h", "4h"]) {
   console.log(`🔍 Analizando par: ${base}`);
 
   const [btcResult, pairResult] = await Promise.all([
-    fetchBestEffort("BTC"),
-    fetchBestEffort(base)
+    fetchBestEffort("BTC", timeframes),
+    fetchBestEffort(base, timeframes)
   ]);
 
-  const btcIndicators = getLatestIndicators(btcResult.data.ohlcv1h, btcResult.data.ohlcv4h);
-  const pairIndicators = getLatestIndicators(pairResult.data.ohlcv1h, pairResult.data.ohlcv4h);
+  const btcIndicators = getLatestIndicators(btcResult.data["1h"], btcResult.data["4h"]);
+  const pairIndicators = getLatestIndicators(pairResult.data["1h"], pairResult.data["4h"]);
   const btcText = formatIndicatorsText(btcIndicators);
   const pairText = formatIndicatorsText(pairIndicators);
 
@@ -255,8 +262,8 @@ Si la recomendación es LONG: SL es el límite inferior, TP el superior. Si es S
 async function chatWithAI(userMessage) {
   console.log("💬 Chat libre con IA...");
 
-  const btcData = await fetchMarketData();
-  const btcIndicators = getLatestIndicators(btcData.ohlcv1h, btcData.ohlcv4h);
+  const btcData = await fetchMarketData(["1h", "4h"]);
+  const btcIndicators = getLatestIndicators(btcData["1h"], btcData["4h"]);
   const btcText = formatIndicatorsText(btcIndicators);
 
   const content = `Eres un asistente trader experto en criptomonedas. Respondes preguntas sobre crypto, trading, análisis técnico, etc.
@@ -270,6 +277,205 @@ ${userMessage}
 Responde de forma útil, clara y concisa. Si te pregunta sobre un par específico del que no tienes datos, usa tu conocimiento general. Si puedes dar contexto de precios actuales basado en los datos de BTC, hazlo.`;
 
   return openRouterChat([{ role: "user", content }]);
+}
+
+const VALID_INDICATORS = ["ADX", "RSI", "ATR", "BB", "SBR", "SELLBUYRATE"];
+const VALID_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h"];
+
+function parseFlexibleCommand(text) {
+  const cleanText = text.replace(/^\//, "").trim();
+  const upperParts = cleanText.toUpperCase().split(/\s+/);
+  const lowerParts = cleanText.toLowerCase().split(/\s+/);
+  
+  if (upperParts.length === 0) return null;
+  
+  const symbol = upperParts[0].replace(/USDT\s*$/, "").trim();
+  if (!symbol) return null;
+  
+  const firstParam = upperParts[1] || null;
+  const isIndicator = VALID_INDICATORS.includes(firstParam);
+  const isTimeframe = VALID_TIMEFRAMES.includes(firstParam?.toLowerCase());
+  
+  let indicator = isIndicator ? firstParam : null;
+  let timeframe = null;
+  let allIndicators = false;
+  
+  if (isTimeframe) {
+    timeframe = firstParam.toLowerCase();
+    allIndicators = true;
+  } else if (!isIndicator && upperParts[2] && VALID_TIMEFRAMES.includes(upperParts[2].toLowerCase())) {
+    timeframe = upperParts[2].toLowerCase();
+  }
+  
+  const isFutures = upperParts.includes("FUTUROS") || upperParts.includes("FUTURES");
+  
+  const hasLong = upperParts.includes("LONG") && !upperParts.includes("SHORT");
+  const hasShort = upperParts.includes("SHORT") && !upperParts.includes("LONG");
+  
+  const hasBotKeyword = upperParts.includes("BOT");
+  const botIntent = (hasLong || hasShort) && (hasBotKeyword || isFutures) ? (hasLong ? "LONG" : "SHORT") : null;
+  
+  return {
+    symbol,
+    indicator,
+    timeframe,
+    allIndicators,
+    isFutures,
+    botIntent
+  };
+}
+
+function formatSingleIndicator(ind, tf, data) {
+  const dec = decimalsForPrice(data.precio);
+  
+  if (ind === "ADX") {
+    const adx = data.adx;
+    if (!adx) return `ADX ${tf}: N/A`;
+    return `ADX(14) ${tf} | DI+: ${adx.diPlus.toFixed(1)} | DI-: ${adx.diMinus.toFixed(1)} | ADX: ${adx.adx.toFixed(1)}`;
+  }
+  
+  if (ind === "RSI") {
+    const rsi = data.rsi ?? data.rsi?.[tf] ?? data.rsi?.["1h"];
+    if (rsi === null || rsi === undefined) return `RSI ${tf}: N/A`;
+    return `RSI(14) ${tf}: ${rsi.toFixed(1)}`;
+  }
+  
+  if (ind === "ATR") {
+    const atr = data.atr ?? data.atr?.[tf] ?? data.atr?.["1h"];
+    const pct = data.atrPct ?? data.atr?.[`${tf}_pct`] ?? data.atr?.["1h_pct"];
+    if (!atr) return `ATR ${tf}: N/A`;
+    return `ATR(14) ${tf}: ${atr.toFixed(dec)} (${pct})`;
+  }
+  
+  if (ind === "BB" || ind === "BOLINGER") {
+    const bb = data.bb ?? data.bb_4h;
+    if (!bb) return `BB ${tf}: N/A`;
+    return `BB(20,2) ${tf} | Upper: ${bb.upper.toFixed(dec)} | Mid: ${bb.middle.toFixed(dec)} | Lower: ${bb.lower.toFixed(dec)}`;
+  }
+  
+  if (ind === "SBR" || ind === "SELLBUYRATE") {
+    const sbr = data.sellBuyRate;
+    if (sbr === null || sbr === undefined) return `Sell/Buy Rate: N/A`;
+    return `Sell/Buy Rate ${tf}: ${sbr.toFixed(2)} ${sbr > 0 ? "→ COMPRADOR" : "→ VENDEDOR"}`;
+  }
+  
+  return "Indicador no disponible";
+}
+
+async function getSingleIndicator(symbol, indicator, timeframe) {
+  const timeframes = timeframe ? [timeframe] : ["1h", "4h"];
+  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
+  
+  let data, market, sym;
+  try {
+    data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
+    market = "futuros";
+    sym = futuresSymbol;
+  } catch (e) {
+    data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
+    market = "spot";
+    sym = spotSymbol;
+  }
+  
+  if (timeframe && timeframes.length === 1) {
+    const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
+    return formatSingleIndicator(indicator, timeframe, ind);
+  }
+  
+  const ind = getLatestIndicators(data["1h"], data["4h"]);
+  const results = [];
+  for (const tf of timeframes) {
+    const tfData = getIndicatorsForTimeframe(data[tf], tf);
+    results.push(formatSingleIndicator(indicator, tf, tfData));
+  }
+  return results.join("\n");
+}
+
+async function getAllIndicatorsForTimeframe(symbol, timeframe) {
+  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
+  
+  let data, market, sym;
+  try {
+    data = await fetchMarketDataForPair(futuresSymbol, true, [timeframe]);
+    market = "futuros";
+    sym = futuresSymbol;
+  } catch (e) {
+    data = await fetchMarketDataForPair(spotSymbol, false, [timeframe]);
+    market = "spot";
+    sym = spotSymbol;
+  }
+  
+  const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
+  const dec = decimalsForPrice(ind.precio);
+  
+  return `📊 *${sym}* (${market}) - *${timeframe.toUpperCase()}*\n\n` +
+    `Precio: $${ind.precio.toFixed(dec)}\n` +
+    `Hora: ${ind.timestamp}\n\n` +
+    `• ${formatSingleIndicator("RSI", timeframe, ind)}\n` +
+    `• ${formatSingleIndicator("ADX", timeframe, ind)}\n` +
+    `• ${formatSingleIndicator("ATR", timeframe, ind)}\n` +
+    `• ${formatSingleIndicator("BB", timeframe, ind)}\n` +
+    `• ${formatSingleIndicator("SBR", timeframe, ind)}`;
+}
+
+async function analyzeBotOpportunity(symbol, direction, useFutures = null) {
+  const timeframes = ["1h", "4h"];
+  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
+  
+  let data, market, sym;
+  if (useFutures === true) {
+    data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
+    market = "futuros";
+    sym = futuresSymbol;
+  } else if (useFutures === false) {
+    data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
+    market = "spot";
+    sym = spotSymbol;
+  } else {
+    try {
+      data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
+      market = "futuros";
+      sym = futuresSymbol;
+    } catch (e) {
+      data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
+      market = "spot";
+      sym = spotSymbol;
+    }
+  }
+  
+  const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
+  const pairText = formatIndicatorsText(pairIndicators);
+  
+  const marketType = market === "futuros" ? "Futures" : "Spot";
+  
+  return openRouterChat([{
+    role: "user",
+    content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${direction.toUpperCase()} en ${sym} (${marketType}) siguiendo ESTRICTAMENTE el protocolo.
+
+DATOS DEL PAR ${sym} (${marketType}):
+${pairText}
+
+PROTOCOLO DE TRADING:
+${protocolo}
+
+INSTRUCCIONES:
+1. Aplica el checklist del punto 12 del protocolo
+2. Determina: ✅ BOT ${direction.toUpperCase()} o ❌ NO TRADE
+3. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+4. Si es ${direction.toUpperCase()}: calcula SL, rango, grids, leverage
+
+RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
+
+✅ BOT ${direction.toUpperCase()}
+• Entry: $XX.XXX
+• SL: $XX.XXX
+• TP: $XX.XXX
+• Range: $XX.XXX - $XX.XXX
+• Grids: XX
+• Leverage: Xx
+
+SL/TP según protocolo: ${direction.toUpperCase() === "LONG" ? "SL es límite inferior, TP límite superior" : "SL es límite superior, TP límite inferior"}.`
+  }]);
 }
 
 async function sendSafeTelegram(text) {
@@ -297,10 +503,10 @@ async function runHourlyAnalysis() {
 
   console.log("🔄 Iniciando análisis horario de BTCUSDT...");
   try {
-    const { ohlcv1h, ohlcv4h } = await fetchMarketData();
+    const marketData = await fetchMarketData(["1h", "4h"]);
     console.log("✅ Datos OHLCV obtenidos");
 
-    const indicators = getLatestIndicators(ohlcv1h, ohlcv4h);
+    const indicators = getLatestIndicators(marketData["1h"], marketData["4h"]);
     const indicatorsText = formatIndicatorsText(indicators);
 
     console.log("🧠 Enviando a OpenRouter para análisis...");
@@ -344,12 +550,18 @@ bot.command("start", async (ctx) => {
     chatId = ctx.chat.id;
     await ctx.reply(
       "🤖 *Bot Analista Crypto Activo*\n\n" +
-      "*Comandos:*\n" +
-      "• `/TICKER` — Ej: `/ETH` `/COOKIEUSDT` — Analiza cualquier par con contexto BTC\n" +
+      "*Comandos básicos:*\n" +
+      "• `/PAR` — Analiza cualquier par con contexto BTC (ej: `/ETH`, `/BTC`)\n" +
+      "• `/PAR TF` — Todos los indicadores en una temporalidad (ej: `/ETH 1h`, `/ADA 4h`)\n" +
       "• `Cerrado` — Activa el análisis automático de BTC cada hora\n" +
-      "• `Abierto` — Pausa el análisis automático\n" +
-      "• Envíame una captura — Analiza el gráfico manualmente\n" +
-      "• Cualquier texto — Pregúntame sobre crypto\n\n" +
+      "• `Abierto` — Pausa el análisis automático\n\n" +
+      "*Comandos avanzados:*\n" +
+      "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`, `/BTC RSI 4h`, `/ADA ATR 15m`)\n" +
+      "• `/PAR BOT LONG|SHORT` — Análisis de oportunidad (ej: `/ETH BOT LONG`, `/ADA SHORT`)\n" +
+      "• `/PAR FUTUROS LONG|SHORT` — Análisis en futuros (ej: `/ETH FUTUROS LONG`)\n" +
+      "• `/help` — Esta ayuda\n\n" +
+      "*Indicadores:* ADX, RSI, ATR, BB, SBR\n" +
+      "*Temporalidades:* 15m, 30m, 1h, 2h, 4h (default: 1h+4h)\n\n" +
       `Estado actual: *${botStatus}*`,
       { parse_mode: "Markdown" }
     );
@@ -358,20 +570,69 @@ bot.command("start", async (ctx) => {
   }
 });
 
+bot.command("help", async (ctx) => {
+  chatId = ctx.chat.id;
+  await ctx.reply(
+    "📖 *Guía de comandos*\n\n" +
+    "*Análisis completo:*\n" +
+    "• `/ETH` , `/BTC` , `/ADA`\n" +
+    "  → Análisis completo con contexto BTC y recomendación\n\n" +
+    "*Todos los indicadores en una TF:*\n" +
+    "• `/ETH 1h` — RSI, ADX, ATR, BB, SBR en 1H\n" +
+    "• `/BTC 4h` — Todos los indicadores en 4H\n" +
+    "• `/ADA 15m` — Todos los indicadores en 15m\n\n" +
+    "*Indicadores específicos:*\n" +
+    "• `/ETH ADX 1h` — ADX con DI+/DI- en 1H\n" +
+    "• `/ETH RSI 4h` — RSI en 4H\n" +
+    "• `/BTC ATR 15m` — ATR en 15m\n" +
+    "• `/ADA BB` — Bollinger Bands en 1h+4h\n\n" +
+    "*Análisis de oportunidad:*\n" +
+    "• `/ETH BOT LONG` — ¿Es buena oportunidad para LONG?\n" +
+    "• `/ETH BOT SHORT` — ¿Es buena oportunidad para SHORT?\n" +
+    "• `/ETH FUTUROS LONG` — Configuración futuros LONG con SL/TP/entry/leverage\n" +
+    "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT con SL/TP/entry/leverage\n\n" +
+    "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
+    { parse_mode: "Markdown" }
+  );
+});
+
 bot.on("message:text", async (ctx) => {
   try {
     chatId = ctx.chat.id;
     const rawText = ctx.message.text.trim();
     const text = rawText.toLowerCase();
 
-    if (text.startsWith("/")) {
-      const symbol = normalizeSymbol(rawText);
-      if (!symbol) {
-        await ctx.reply("❌ Formato inválido. Usa por ejemplo: \`/ETH\`, \`/COOKIEUSDT\`", { parse_mode: "Markdown" });
+    if (rawText.startsWith("/")) {
+      const cmd = parseFlexibleCommand(rawText);
+      if (!cmd) {
+        await ctx.reply("❌ Formato inválido. Usa /help para ver los comandos disponibles.");
         return;
       }
-      await ctx.reply(`🔍 Analizando ${symbol}USDT con contexto de BTC...\n\nEsto puede tomar hasta 30 segundos.`);
-      const analysis = await analyzePair(symbol);
+
+      if (cmd.botIntent) {
+        const market = cmd.isFutures ? "futuros" : null;
+        await ctx.reply(`🔍 Analizando oportunidad ${cmd.botIntent} para ${cmd.symbol}USDT (${market || "mejor disponible"})...`);
+        const analysis = await analyzeBotOpportunity(cmd.symbol, cmd.botIntent, cmd.isFutures ? true : undefined);
+        await ctx.reply(analysis);
+        return;
+      }
+
+      if (cmd.indicator) {
+        await ctx.reply(`🔍 Consultando ${cmd.indicator} ${cmd.timeframe || "1h+4h"} para ${cmd.symbol}USDT...`);
+        const result = await getSingleIndicator(cmd.symbol, cmd.indicator, cmd.timeframe);
+        await ctx.reply(result);
+        return;
+      }
+
+      if (cmd.allIndicators) {
+        await ctx.reply(`🔍 Obteniendo todos los indicadores en ${cmd.timeframe} para ${cmd.symbol}USDT...`);
+        const result = await getAllIndicatorsForTimeframe(cmd.symbol, cmd.timeframe);
+        await ctx.reply(result);
+        return;
+      }
+
+      await ctx.reply(`🔍 Analizando ${cmd.symbol}USDT con contexto de BTC...\n\nEsto puede tomar hasta 30 segundos.`);
+      const analysis = await analyzePair(cmd.symbol, ["1h", "4h"]);
       await ctx.reply(analysis);
       return;
     }
@@ -416,38 +677,22 @@ bot.on("message:photo", async (ctx) => {
     const imageResponse = await axios.get(fileUrl, { responseType: 'arraybuffer' });
     const base64Image = Buffer.from(imageResponse.data, 'binary').toString('base64');
 
-    const response = await axios.post(
-      "https://openrouter.ai/api/v1/chat/completions",
+    const content = await tryWithFallback([
       {
-        model: "google/gemini-2.5-flash",
-        messages: [
+        role: "user",
+        content: [
           {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Eres un trader profesional. Analiza este gráfico siguiendo este protocolo:\n\n${protocolo}\n\nDetermina: ✅ BOT LONG, ❌ BOT SHORT o ❌ NO TRADE. Si es LONG/SHORT da: Entry, SL, TP, Range, Grids, Leverage. Máximo 10 líneas. Español.`
-              },
-              {
-                type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${base64Image}` }
-              }
-            ]
+            type: "text",
+            text: `Eres un trader profesional. Analiza este gráfico siguiendo este protocolo:\n\n${protocolo}\n\nDetermina: ✅ BOT LONG, ❌ BOT SHORT o ❌ NO TRADE. Si es LONG/SHORT da: Entry, SL, TP, Range, Grids, Leverage. Máximo 10 líneas. Español.`
+          },
+          {
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${base64Image}` }
           }
         ]
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://localhost",
-          "X-Title": "Crypto Telegram Agent"
-        },
-        timeout: 60000
       }
-    );
+    ]);
 
-    const content = response.data.choices[0]?.message?.content;
     if (content) {
       await ctx.reply(content);
     } else {
