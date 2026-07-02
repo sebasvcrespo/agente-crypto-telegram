@@ -149,7 +149,7 @@ export function calculateSellBuyRate(open, high, low, close, volume, period = 34
 }
 
 export function getLatestIndicators(ohlcv1h, ohlcv4h) {
-  console.log(`📐 Indicators: 1h=${ohlcv1h.length} velas, 4h=${ohlcv4h.length} velas`);
+  console.log(`📐 Indicators: 1h=${ohlcv1h?.length || 0} velas, 4h=${ohlcv4h?.length || 0} velas`);
   const extract = (data, idx) => data.map(d => d[idx]);
 
   const o1 = extract(ohlcv1h, 1), h1 = extract(ohlcv1h, 2),
@@ -184,5 +184,25 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h) {
       "4h_pct": atr4h ? `${(atr4h / lastC4 * 100).toFixed(2)}%` : null
     },
     sellBuyRate: sbr
+  };
+}
+
+export function getIndicatorsForTimeframe(ohlcv, timeframe = "1h") {
+  const extract = (data, idx) => data.map(d => d[idx]);
+  const o = extract(ohlcv, 1), h = extract(ohlcv, 2),
+        l = extract(ohlcv, 3), c = extract(ohlcv, 4), v = extract(ohlcv, 5);
+
+  const lastC = c[c.length - 1];
+  const lastTime = new Date(ohlcv[ohlcv.length - 1][0]);
+
+  return {
+    precio: lastC,
+    timestamp: lastTime.toISOString(),
+    bb: calculateBB(c, 20, 2),
+    rsi: calculateRSI(c, 14),
+    adx: calculateADX(h, l, c, 14),
+    atr: calculateATR(h, l, c, 14),
+    sellBuyRate: calculateSellBuyRate(o, h, l, c, v, 34),
+    atrPct: calculateATR(h, l, c, 14) ? `${(calculateATR(h, l, c, 14) / lastC * 100).toFixed(2)}%` : null
   };
 }
