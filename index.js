@@ -95,13 +95,31 @@ ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : 
   return output;
 }
 
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function fetchMarketDataForPair(symbol, isFutures = true, timeframes = ["1h", "4h"]) {
   const ex = isFutures ? futuresExchange : spotExchange;
   const exchangeName = isFutures ? "KuCoin Futures" : "KuCoin Spot";
   
   const results = {};
   for (const tf of timeframes) {
-    const ohlcv = await ex.fetchOHLCV(symbol, tf, undefined, 100);
+    let ohlcv = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        ohlcv = await ex.fetchOHLCV(symbol, tf, undefined, 100);
+        break;
+      } catch (e) {
+        if (e.message?.includes("429") && attempt < 3) {
+          const delay = attempt * 2000;
+          console.log(`⏳ Rate limit en ${exchangeName} ${tf}, esperando ${delay}ms (intento ${attempt}/3)...`);
+          await sleep(delay);
+        } else {
+          throw e;
+        }
+      }
+    }
     console.log(`📊 ${exchangeName} ${symbol}: ${tf}=${ohlcv.length} velas`);
     results[tf] = ohlcv;
   }
@@ -125,7 +143,8 @@ async function fetchBestEffort(base, timeframes = ["1h", "4h"]) {
     const data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
     return { data, market: "futuros", symbol: futuresSymbol };
   } catch (e) {
-    console.log(`⚠️ ${futuresSymbol} en futuros FALLÓ: ${e.message}. Usando spot ${spotSymbol}...`);
+    console.log(`⚠️ ${futuresSymbol} en futuros FALLÓ: ${e.message}. Esperando 3s antes de spot...`);
+    await sleep(3000);
     const data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
     return { data, market: "spot", symbol: spotSymbol };
   }
@@ -372,6 +391,8 @@ async function getSingleIndicator(symbol, indicator, timeframe) {
     market = "futuros";
     sym = futuresSymbol;
   } catch (e) {
+    console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
+    await sleep(3000);
     data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
     market = "spot";
     sym = spotSymbol;
@@ -400,6 +421,8 @@ async function getAllIndicatorsForTimeframe(symbol, timeframe) {
     market = "futuros";
     sym = futuresSymbol;
   } catch (e) {
+    console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
+    await sleep(3000);
     data = await fetchMarketDataForPair(spotSymbol, false, [timeframe]);
     market = "spot";
     sym = spotSymbol;
@@ -437,6 +460,8 @@ async function analyzeBotOpportunity(symbol, direction, useFutures = null) {
       market = "futuros";
       sym = futuresSymbol;
     } catch (e) {
+      console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
+      await sleep(3000);
       data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
       market = "spot";
       sym = spotSymbol;
