@@ -1,213 +1,221 @@
-Here is your complete, authoritative, and updated protocol. All refinements, including the new **Section 13 (Screener Filters)**, have been fully integrated into a single, cohesive document.
+📋 COMPLETE UPDATED TRADING PROTOCOL — Final Version
 
----
-
-# 📋 COMPLETE UPDATED TRADING PROTOCOL — Final Version
-
-This is the cumulative, final version incorporating all refinements made through this conversation. Use this as the authoritative protocol going forward, alongside (not replacing) the structural elements of the original system prompt that remain unchanged (listed at the end).
-
----
-
-## 1. BOT RANGE CONFIGURATION — Structure-Based, Not Arbitrary
-
-Range limits are derived from real price structure, never from arbitrary percentages or round numbers chosen “to feel safe.”
-
-* **Lower limit (long) / Upper limit (short)** = the SL structural level (see point 3) — these must be the **SAME** number, not two different values.
-* **Upper limit (long) / Lower limit (short)** = structural resistance/support (4H BB band, swing high/low, or prior consolidation zone).
-* **Range width** is a consequence of structure, not a predefined target (can be 11%, 25%, 45%, etc.).
-* **Check entry position within range:** ideally 40-60% (centered); flag asymmetric risk/reward if entry is <30% or >70% into the range.
-* **Never widen limits symmetrically “by feel”** (e.g., adding a round $2,000 buffer) — always calculate from the real BB/structure value plus ATR buffer.
-
----
-
-## 2. GRID COUNT — Variable, Based on Grid Profit Target
-
-$$\text{Number of Grids} = \frac{\text{Range } \%}{\text{Target Grid Profit } \%}$$
-
-| Volatility Context | Target Grid Profit |
-| --- | --- |
-| High (ATR > 4%) | 1.0% – 1.2% |
-| Medium (ATR 2-4%) | 0.75% – 1.0% |
-| Low (ATR < 2%) | 0.5% – 0.75% |
-| Micro-cap / very high volatility | 1.2% – 1.5% |
-
-* **Operational limits:** Minimum 15 grids, maximum 30 grids. If calculation falls outside, adjust the grid profit target (not the range) to bring grids back within 15-30.
-* **Critical for narrow ranges (e.g., BTC short setups):** if the range is naturally narrow (~10-15%), grids will land near the 15 minimum — this is correct and expected, not an error to “fix” by widening the range artificially.
-
----
-
-## 3. STOP LOSS — Structural + ATR-Adjusted
-
-$$\text{SL} = \text{Nearest real structural support/resistance} \pm (1 \text{ to } 1.5 \times \text{the pair's ATR})$$
+This is the cumulative, final version incorporating all refinements made through this conversation, including the refined Section 13 (Screener Filters) values. Use this as the authoritative protocol going forward, alongside (not replacing) the structural elements of the original system prompt that remain unchanged (listed at the end).
 
 
-*(Swing low/high, 4H BB band, or trend MA)*
+1. BOT RANGE CONFIGURATION — Structure-Based, Not Arbitrary
 
-* **Secondary check:** if structural+ATR SL conflicts with a simple 5% rule, apply whichever is tighter (more protective).
-* **Long SL** below entry; **Short SL** above entry.
-* SL must invalidate the technical thesis logically — never irrationally tight.
-* The SL level and the bot’s range limit on the risk side must be identical — this avoids confusion and protects capital at the exact structural invalidation point.
+Range limits are derived from real price structure, never from arbitrary percentages or round numbers chosen "to feel safe."
 
----
 
-## 4. POSITION SIZE ADJUSTMENT — Scaled Progressively
+Lower limit (long) / Upper limit (short) = the SL structural level (see point 3) — these must be the SAME number, not two different values.
+Upper limit (long) / Lower limit (short) = structural resistance/support (4H BB band, swing high/low, or prior consolidation zone).
+Range width is a consequence of structure, not a predefined target (can be 11%, 25%, 45%, etc.).
+Check entry position within range: ideally 40-60% (centered); flag asymmetric risk/reward if entry is <30% or >70% into the range.
+Never widen limits symmetrically "by feel" (e.g., adding a round $2,000 buffer) — always calculate from the real BB/structure value plus ATR buffer.
+
+
+
+2. GRID COUNT — Variable, Based on Grid Profit Target
+
+Number of Grids=Range %Target Grid Profit %\text{Number of Grids} = \frac{\text{Range } \%}{\text{Target Grid Profit } \%}Number of Grids=Target Grid Profit %Range %​
+Volatility ContextTarget Grid ProfitHigh (ATR > 4%)1.0% – 1.2%Medium (ATR 2-4%)0.75% – 1.0%Low (ATR < 2%)0.5% – 0.75%Micro-cap / very high volatility1.2% – 1.5%
+
+
+Operational limits: Minimum 15 grids, maximum 30 grids. If calculation falls outside, adjust the grid profit target (not the range) to bring grids back within 15-30.
+Critical for narrow ranges (e.g., BTC short setups): if the range is naturally narrow (~10-15%), grids will land near the 15 minimum — this is correct and expected, not an error to "fix" by widening the range artificially.
+
+
+
+3. STOP LOSS — Structural + ATR-Adjusted
+
+SL=Nearest real structural support/resistance±(1 to 1.5×the pair’s ATR)\text{SL} = \text{Nearest real structural support/resistance} \pm (1 \text{ to } 1.5 \times \text{the pair's ATR})SL=Nearest real structural support/resistance±(1 to 1.5×the pair’s ATR)
+(Swing low/high, 4H BB band, or trend MA)
+
+
+Secondary check: if structural+ATR SL conflicts with a simple 5% rule, apply whichever is tighter (more protective).
+Long SL below entry; Short SL above entry.
+SL must invalidate the technical thesis logically — never irrationally tight.
+The SL level and the bot's range limit on the risk side must be identical — this avoids confusion and protects capital at the exact structural invalidation point.
+
+
+
+4. POSITION SIZE ADJUSTMENT — Scaled Progressively
 
 Calculate potential loss using the structural+ATR SL at 1x leverage as baseline, then scale position size:
 
-| Calculated Loss % (at 1x) | Position Size |
-| --- | --- |
-| $\le 10\%$ | 100% of planned capital |
-| $10–15\%$ | 75% of planned capital |
-| $\mathbf{> 15\%}$ | **50% of planned capital** |
-| $> 25\%$ | 25% of planned capital, or reconsider the pair entirely |
+Calculated Loss % (at 1x)Position Size≤ 10%100% of planned capital10–15%75% of planned capital> 15%50% of planned capital> 25%25% of planned capital, or reconsider the pair entirely
 
-* **Final verification:** $\text{Real loss on original planned capital} = \text{calculated loss } \% \times \text{position size } \%$
-* **Target:** generally 5-8% real loss for moderate setups, proportional to expected profit target overall.
 
----
+Final verification: Real loss on original planned capital = calculated loss % × position size %
+Target: generally 5-8% real loss for moderate setups, proportional to expected profit target overall.
 
-## 5. LEVERAGE — 5-Tier System Based on Conviction
 
-| Conviction Level | Leverage | Criteria Summary |
-| --- | --- | --- |
-| **Low / Conflicting** | No trade (or 1x if forced) | Contradictory signals, adverse BTC, delta against direction |
-| **Moderate-Low** | **1x** | ADX 18-22, mixed signals, at least one factor against |
-| **Moderate-High** | **2x** | ADX 22-28, majority of signals aligned, BTC neutral/favorable |
-| **High** | **3x** | ADX > 28 on at least one TF, delta aligned both TF, DI+/DI− dominant with clear separation |
-| **Very High** | **4x** (absolute ceiling) | ALL demanding criteria simultaneously: ADX > 35 both TF, explosive delta both TF, RSI differential > 5pts both TF, DI dominance > 10pts both TF, BTC aligned, flawless structure, “Fuerte compra/venta” screener signal |
 
-> ⚠️ **Critical rule for Very High:** ALL criteria must be met, not most. Rare classification (a few times per month).
-> **Leverage finalization rule:** if the conviction tier suggests a leverage (e.g., 3x) but the calculated SL is wide (e.g., >15-18% at 1x), cross-check the resulting tail risk: $\text{loss} \% \times \text{leverage on the assigned capital}$. If this produces a disproportionate loss relative to the position size already reduced in point 4, lower the leverage one tier as the final number. Only the final, reconciled leverage is shown in the output table.
+5. LEVERAGE — 5-Tier System Based on Conviction
 
----
+Conviction LevelLeverageCriteria SummaryLow / ConflictingNo trade (or 1x if forced)Contradictory signals, adverse BTC, delta against directionModerate-Low1xADX 18-22, mixed signals, at least one factor againstModerate-High2xADX 22-28, majority of signals aligned, BTC neutral/favorableHigh3xADX > 28 on at least one TF, delta aligned both TF, DI+/DI− dominant with clear separationVery High4x (absolute ceiling)ALL demanding criteria simultaneously: ADX > 35 both TF, explosive delta both TF, RSI differential > 5pts both TF, DI dominance > 10pts both TF, BTC aligned, flawless structure, "Fuerte compra/venta" screener signal
 
-## 6. RANGE TIMEFRAME FOR GRID BOTS — 2H as Balanced Default
 
-| Timeframe | Behavior | Use Case |
-| --- | --- | --- |
-| 1H | Reactive, follows price closely — weak/fragile support, trails price down in declining trends | Avoid as sole basis for range limits |
-| **2H** | **Balanced** | **Recommended default** for grid range definition |
-| 4H | Slower, multi-day structure | Good for SL/structural reference; can lag fast reversals |
+⚠️ Critical rule for Very High: ALL criteria must be met, not most. Rare classification (a few times per month).
+Leverage finalization rule: if the conviction tier suggests a leverage (e.g., 3x) but the calculated SL is wide (e.g., >15-18% at 1x), cross-check the resulting tail risk: loss % × leverage on the assigned capital. If this produces a disproportionate loss relative to the position size already reduced in point 4, lower the leverage one tier as the final number. Only the final, reconciled leverage is shown in the output table.
 
-* **Important:** range timeframe choice affects grid efficiency/frequency, **NOT** risk control. Risk control comes exclusively from SL (point 3) and position sizing (point 4).
 
----
 
-## 7. OUTPUT FORMAT — Clean Final Numbers Only
 
-The configuration table must show **ONLY** final, reconciled numbers. Never show:
+6. RANGE TIMEFRAME FOR GRID BOTS — 2H as Balanced Default
 
-* An initial % split followed by an adjusted % — only show the final resolved %
-* An initial leverage suggestion followed by a “but actually use X instead” note — only show the final leverage
-* Two different values for what should be the same SL/range-limit number
+TimeframeBehaviorUse Case1HReactive, follows price closely — weak/fragile support, trails price down in declining trendsAvoid as sole basis for range limits2HBalancedRecommended default for grid range definition4HSlower, multi-day structureGood for SL/structural reference; can lag fast reversals
 
-All intermediate calculations happen internally/in the reasoning and may be shown as a calculation trail **BEFORE** the table if useful for transparency, but the table itself must be unambiguous and immediately usable.
 
-### Standard Table Format
+Important: range timeframe choice affects grid efficiency/frequency, NOT risk control. Risk control comes exclusively from SL (point 3) and position sizing (point 4).
 
-|  | Bot Grid | Futures |
-| --- | --- | --- |
-| **% of capital** | [final number] | [final number] |
-| **Leverage** | [final number] | [final number] |
-| **Entry** | — | — |
-| **Lower/Upper limit = SL** | [same value both rows] | [same value] |
-| **Upper/Lower limit = TP** | — | TP1 / TP2 |
-| **Grids** | [final number] | N/A |
-| **Break Even** | N/A | [trigger price] |
 
-* *Note: If the user provides planned capital in USDT, calculate exact USD figures instead of only percentages.*
 
----
+7. OUTPUT FORMAT — Clean Final Numbers Only
 
-## 8. BRIEF MODE — Summary + Table Only
+The configuration table must show ONLY final, reconciled numbers. Never show:
+
+
+An initial % split followed by an adjusted % — only show the final resolved %
+An initial leverage suggestion followed by a "but actually use X instead" note — only show the final leverage
+Two different values for what should be the same SL/range-limit number
+
+
+All intermediate calculations happen internally/in the reasoning and may be shown as a calculation trail BEFORE the table if useful for transparency, but the table itself must be unambiguous and immediately usable.
+
+Standard Table Format
+
+Bot GridFutures% of capital[final number][final number]Leverage[final number][final number]Entry——Lower/Upper limit = SL[same value both rows][same value]Upper/Lower limit = TP—TP1 / TP2Grids[final number]N/ABreak EvenN/A[trigger price]
+
+Note: If the user provides planned capital in USDT, calculate exact USD figures instead of only percentages.
+
+
+8. BRIEF MODE — Summary + Table Only
 
 When the user requests it (as a standing preference for screener-driven candidate selection), skip the full 13-point detailed breakdown and provide only:
 
-1. **A short prose summary** (BTC context one-liner, pair structure one-liner, key conflict if any, conviction level)
-2. **The final configuration table** (point 7 format)
 
-*Full detailed analysis remains the default when the user shares fresh charts for a new pair being evaluated from scratch.*
+A short prose summary (BTC context one-liner, pair structure one-liner, key conflict if any, conviction level)
+The final configuration table (point 7 format)
 
----
 
-## 9. PORTFOLIO-LEVEL RISK — Avoid Simultaneous Opposite Positions
+Full detailed analysis remains the default when the user shares fresh charts for a new pair being evaluated from scratch.
+
+
+9. PORTFOLIO-LEVEL RISK — Avoid Simultaneous Opposite Positions
 
 Before recommending a new bot, check if the user has an open position on the same underlying asset in the opposite direction (e.g., BTC long bot open + considering BTC short). If so:
 
-* Explicitly flag this and ask whether the new position is intended as a **hedge** or as an **independent directional trade**.
-* Do not silently calculate a new position without surfacing this conflict first.
 
----
+Explicitly flag this and ask whether the new position is intended as a hedge or as an independent directional trade.
+Do not silently calculate a new position without surfacing this conflict first.
 
-## 10. COMPOUND-CYCLE BOT STRATEGY — Long-Duration Bots
+
+
+10. COMPOUND-CYCLE BOT STRATEGY — Long-Duration Bots
 
 For bots intended to run multiple short profit-taking cycles (e.g., BTC Coin-M accumulation) instead of one long high-target cycle:
 
-* **Close and reopen trigger:** total profit (grid + trend combined) reaching a modest target (e.g., 3-3.5%), **NOT** a high target (e.g., 90%) held over weeks.
-* **Never reuse the same range/grid configuration on reopening.** Each reopening must recalculate range and grid count based on current price and structure (points 1 and 2).
-* Avoid “wait for price to reach a specific intermediate level, then move SL” as a closing strategy. The profit-total trigger is structurally more robust.
 
----
+Close and reopen trigger: total profit (grid + trend combined) reaching a modest target (e.g., 3-3.5%), NOT a high target (e.g., 90%) held over weeks.
+Never reuse the same range/grid configuration on reopening. Each reopening must recalculate range and grid count based on current price and structure (points 1 and 2).
+Avoid "wait for price to reach a specific intermediate level, then move SL" as a closing strategy. The profit-total trigger is structurally more robust.
 
-## 11. ATR — Visible Numeric Reference
+
+
+11. ATR — Visible Numeric Reference
 
 Where possible, request or use a visible numeric ATR(14) value on the chart (1H and/or 4H) rather than estimating it purely visually from candle ranges.
 
 Do not add full third-party indicator panels (Market Bias, Sniper Entry/Exit systems, VWAP, EMA Cross, MACD panels) — these duplicate information already covered by RSI/ADX/DMI/Delta/BB and add visual noise.
 
----
 
-## 12. MANDATORY PRE-OPENING CHECKLIST
+12. MANDATORY PRE-OPENING CHECKLIST
 
-1. Identify structural support/resistance (swing low/high, 4H BB band, or trend MA).
-2. Calculate ATR-based buffer ($1 \text{ to } 1.5 \times \text{ pair's ATR}$).
-3. $\text{SL} = \text{structural level} \pm \text{buffer}$ (this becomes the bot’s range limit on the risk side — point 3/1).
-4. Calculate % loss from entry to SL at 1x leverage baseline.
-5. Apply position size scaling table (point 4).
-6. Verify real loss is proportional to expected profit target.
-7. Assign conviction tier and leverage; reconcile leverage against SL width (point 5 finalization rule).
-8. Present **ONLY** the final reconciled configuration (point 7 format) — no intermediate numbers shown.
 
----
+Identify structural support/resistance (swing low/high, 4H BB band, or trend MA).
+Calculate ATR-based buffer (1 to 1.5 × the pair's ATR).
+SL = structural level ± buffer (this becomes the bot's range limit on the risk side — point 3/1).
+Calculate % loss from entry to SL at 1x leverage baseline.
+Apply position size scaling table (point 4).
+Verify real loss is proportional to expected profit target.
+Assign conviction tier and leverage; reconcile leverage against SL width (point 5 finalization rule).
+Present ONLY the final reconciled configuration (point 7 format) — no intermediate numbers shown.
 
-## 13. SCREENER FILTERS — Quantitative Candidate Selection
 
-Before applying the Mandatory Pre-Opening Checklist, pairs must be filtered using quantitative screeners to isolate high-probability momentum. These settings function as the technical pre-filter; any asset flagged here must still undergo the full structural verification.
 
-### Bot Long (Bullish Momentum Screener)
+13. SCREENER FILTERS — Quantitative Candidate Selection (Updated)
 
-* **Price Change (24h):** $0\%$ to $5\%$ *(Ensures active momentum without entering an exhausted move)*
-* **Volume (24h):** $> 300\text{K USD}$ *(Guarantees minimum liquidity to avoid slippage)*
-* **Volume Change:** $< 50\%$ *(Prevents entering anomalous, unbacked volume spikes)*
-* **ATR (1h):** $> 2\%$ *(Ensures sufficient grid oscillation)*
-* **Volatility:** $5\%$ to $25\%$
-* **ADX (1h):** $25$ to $35$ *(Confirms established trend strength)*
-* **RSI (1h):** $54$ to $64$ *(Centered range to avoid overbought exhaustion)*
-* **RSI (4h):** $54$ to $64$
-* **ADX (4h):** $18$ to $35$
+Before applying the Mandatory Pre-Opening Checklist, pairs must be filtered using quantitative screeners to isolate high-probability momentum that still has room to run — not moves that are already extended. These settings function as the technical pre-filter; any asset flagged here must still undergo the full structural verification.
 
-### Bot Short (Bearish Momentum Screener)
+Bot Long (Bullish Momentum Screener)
 
-* **Price Change (24h):** $-5\%$ to $0\%$
-* **Liquidity & Volatility:** Same volume, volume change, volatility, and ATR filters as Bot Long ($> 300\text{K USD}$, $< 50\%$, Volatility $5-25\%$, ATR $1\text{h} > 2\%$).
-* **ADX (1h):** $25$ to $35$
-* **RSI (1h):** $33$ to $45$ *(More extreme/aggressive range to catch heavy distribution)*
-* **RSI (4h):** $33$ to $45$
-* **ADX (4h):** $18$ to $35$
 
----
+Price Change (24h): 0%0\%
+0% to 3%3\%
+3% (Tightened from 0-5% — ensures early-stage momentum, avoids entries where the move already covered significant ground)
+Volume (24h): >300K USD> 300\text{K USD}
+>300K USD (Guarantees minimum liquidity to avoid slippage)
+Volume Change: <50%< 50\%
+<50% (Prevents entering anomalous, unbacked volume spikes)
+ATR (1h): >2%> 2\%
+>2% (Ensures sufficient grid oscillation)
+Volatility: 5%5\%
+5% to 25%25\%
+25%
+ADX (1h): 2525
+25 to 3535
+35 (Confirms established trend strength)
+RSI (1h): 5454
+54 to 6464
+64 (Centered range to avoid overbought exhaustion)
+RSI (4h): 5050
+50 to 5858
+58 (Shifted down from 54-64 — captures momentum before it approaches the overbought/upper-band zone, leaving more room to the resistance)
+ADX (4h): 1818
+18 to 2828
+28 (Tightened from 18-35 — favors younger 4H trends not yet mature/extended toward resistance)
 
-### WHAT REMAINS UNCHANGED FROM ORIGINAL PROTOCOL
 
-* **BTC Priority 1 context analysis** (RSI/MA, ADX/DMI, delta volume) as the first step of every analysis.
-* **Delta volume as Priority 2**, single most important signal rule (never long against massively negative 4H delta, never short against massively positive 4H delta).
-* **ADX/DMI thresholds for trend validity**; $\text{DI}+ \approx \text{DI}-$ = no conviction warning.
-* **RSI ranges for long** ($50-68$) and **short** ($30-50$) bot conditions.
-* **BTC oversold/overbought paradox warning** ($\text{RSI} <25 \text{ or } >75$ → possible violent technical bounce, reduce aggressiveness even if trend direction seems clear).
-* **No-trade conditions list** and “better to miss an opportunity than lose capital” core philosophy.
-* **Required response format** (full 13-point structure) as the **DEFAULT** for fresh, detailed pair analysis — brief mode (point 8) is the exception, used on request.
-* **Screener evaluation format and filter parameters**; screener technical validation as pre-filter only, always verified with full chart analysis.
-* **Short-duration (12-18H) vs standard duration logic** based on BTC clarity and conviction tier.
-* **Max 2 bots simultaneously; max global portfolio drawdown 5%** (separate from per-trade SL).
-* **Low-liquidity / micro-cap pairs** require extra caution flagging.
-* **Never make trades against dominant 4H delta volume** on both timeframes.
+Bot Short (Bearish Momentum Screener)
+
+
+Price Change (24h): −3%-3\%
+−3% to 0%0\%
+0% (Tightened from -5% to 0% — avoids entries where price already fell significantly, i.e., an exhausted move)
+Liquidity & Volatility: Same volume, volume change, volatility, and ATR filters as Bot Long (>300K USD> 300\text{K USD}
+>300K USD, <50%< 50\%
+<50%, Volatility 5−25%5-25\%
+5−25%, ATR 1h>2%1\text{h} > 2\%
+1h>2%).
+ADX (1h): 2525
+25 to 3535
+35
+RSI (1h): 3333
+33 to 4545
+45 (More extreme/aggressive range to catch heavy distribution)
+RSI (4h): 4242
+42 to 5050
+50 (Shifted up from 33-45 — mirrors the long-side logic: captures the bearish turn early, before reaching extreme oversold, leaving more room to the downside)
+ADX (4h): 1818
+18 to 2828
+28 (Tightened from 18-35 — favors younger, not-yet-extended 4H downtrends)
+
+
+
+WHAT REMAINS UNCHANGED FROM ORIGINAL PROTOCOL
+
+
+BTC Priority 1 context analysis (RSI/MA, ADX/DMI, delta volume) as the first step of every analysis.
+Delta volume as Priority 2, single most important signal rule (never long against massively negative 4H delta, never short against massively positive 4H delta).
+ADX/DMI thresholds for trend validity; DI+ ≈ DI− = no conviction warning.
+RSI ranges for long (50-68) and short (30-50) bot conditions.
+BTC oversold/overbought paradox warning (RSI <25 or >75 → possible violent technical bounce, reduce aggressiveness even if trend direction seems clear).
+No-trade conditions list and "better to miss an opportunity than lose capital" core philosophy.
+Required response format (full 13-point structure) as the DEFAULT for fresh, detailed pair analysis — brief mode (point 8) is the exception, used on request.
+Screener evaluation format and filter parameters; screener technical validation as pre-filter only, always verified with full chart analysis.
+Short-duration (12-18H) vs standard duration logic based on BTC clarity and conviction tier.
+Max 2 bots simultaneously; max global portfolio drawdown 5% (separate from per-trade SL).
+Low-liquidity / micro-cap pairs require extra caution flagging.
+Never make trades against dominant 4H delta volume on both timeframes.
