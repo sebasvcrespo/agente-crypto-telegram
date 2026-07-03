@@ -303,7 +303,7 @@ const VALID_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h"];
 
 function parseFlexibleCommand(text) {
   const cleanText = text.replace(/^\//, "").trim();
-  const upperParts = cleanText.toUpperCase().split(/\s+/);
+  const upperParts = cleanText.toUpperCase().split(/\s+/).map(p => p.replace(/[?!.,]+$/, ""));
   const lowerParts = cleanText.toLowerCase().split(/\s+/);
   
   if (upperParts.length === 0) return null;
@@ -332,15 +332,17 @@ function parseFlexibleCommand(text) {
   const hasShort = upperParts.includes("SHORT") && !upperParts.includes("LONG");
   
   const hasBotKeyword = upperParts.includes("BOT");
+  const hasComparisonMode = hasBotKeyword && isFutures;
   const botIntent = (hasLong || hasShort) && (hasBotKeyword || isFutures) ? (hasLong ? "LONG" : "SHORT") : null;
-  
+
   return {
     symbol,
     indicator,
     timeframe,
     allIndicators,
     isFutures,
-    botIntent
+    botIntent,
+    comparisonMode: hasComparisonMode && !!botIntent
   };
 }
 
@@ -503,6 +505,70 @@ SL/TP según protocolo: ${direction.toUpperCase() === "LONG" ? "SL es límite in
   }]);
 }
 
+async function compareBotVsFutures(symbol, direction) {
+  const timeframes = ["1h", "4h"];
+  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
+
+  let data, market, sym;
+  try {
+    data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
+    market = "futuros";
+    sym = futuresSymbol;
+  } catch (e) {
+    console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
+    await sleep(3000);
+    data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
+    market = "spot";
+    sym = spotSymbol;
+  }
+
+  const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
+  const pairText = formatIndicatorsText(pairIndicators);
+  const marketType = market === "futuros" ? "Futures" : "Spot";
+
+  return openRouterChat([{
+    role: "user",
+    content: `Eres un trader profesional de criptomonedas. Analiza si es mejor usar un BOT GRID o FUTUROS para una operación ${direction.toUpperCase()} en ${sym} (${marketType}).
+
+DATOS DEL PAR ${sym}:
+${pairText}
+
+PROTOCOLO DE TRADING:
+${protocolo}
+
+INSTRUCCIONES:
+1. Analiza los datos y determina los parámetros para BOT GRID (range, grids, SL, TP, leverage)
+2. Analiza los datos y determina los parámetros para FUTUROS (entry, SL, TP1, TP2, leverage)
+3. COMPARA ambas opciones y recomienda cuál es mejor según las condiciones actuales del mercado
+4. Si el mercado está en rango (ADX bajo), el BOT GRID suele ser mejor. Si hay tendencia fuerte (ADX alto), los FUTUROS pueden ser mejores.
+
+RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
+
+📊 COMPARACIÓN ${sym} — ${direction.toUpperCase()}
+
+🔹 BOT GRID:
+• Entry: $XX.XXX
+• Range: $XX.XXX - $XX.XXX
+• Grids: XX
+• SL: $XX.XXX
+• TP: $XX.XXX
+• Leverage: Xx
+
+🔹 FUTUROS:
+• Entry: $XX.XXX
+• SL: $XX.XXX
+• TP1: $XX.XXX
+• TP2: $XX.XXX
+• Leverage: Xx
+
+📌 RECOMENDACIÓN: [BOT GRID / FUTUROS]
+• Motivo: [explicación breve]
+
+Para LONG: SL es límite inferior, TP es límite superior.
+Para SHORT: SL es límite superior, TP es límite inferior.`
+  }]);
+}
+
 async function sendSafeTelegram(text) {
   if (!chatId) {
     console.warn("⚠️ sendSafeTelegram: no hay chatId, mensaje no enviado");
@@ -584,6 +650,7 @@ bot.command("start", async (ctx) => {
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`, `/BTC RSI 4h`, `/ADA ATR 15m`)\n" +
       "• `/PAR BOT LONG|SHORT` — Análisis de oportunidad (ej: `/ETH BOT LONG`, `/ADA SHORT`)\n" +
       "• `/PAR FUTUROS LONG|SHORT` — Análisis en futuros (ej: `/ETH FUTUROS LONG`)\n" +
+      "• `/PAR BOT O FUTUROS LONG|SHORT` — Compara bot vs futuros (ej: `/ETH BOT O FUTUROS LONG`)\n" +
       "• `/help` — Esta ayuda\n\n" +
       "*Indicadores:* ADX, RSI, ATR, BB, SBR\n" +
       "*Temporalidades:* 15m, 30m, 1h, 2h, 4h (default: 1h+4h)\n\n" +
@@ -615,7 +682,9 @@ bot.command("help", async (ctx) => {
     "• `/ETH BOT LONG` — ¿Es buena oportunidad para LONG?\n" +
     "• `/ETH BOT SHORT` — ¿Es buena oportunidad para SHORT?\n" +
     "• `/ETH FUTUROS LONG` — Configuración futuros LONG con SL/TP/entry/leverage\n" +
-    "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT con SL/TP/entry/leverage\n\n" +
+    "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT con SL/TP/entry/leverage\n" +
+    "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros y recomienda el mejor\n" +
+    "• `/ETH BOT O FUTUROS SHORT` — Compara bot vs futuros y recomienda el mejor\n\n" +
     "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
     { parse_mode: "Markdown" }
   );
@@ -631,6 +700,13 @@ bot.on("message:text", async (ctx) => {
       const cmd = parseFlexibleCommand(rawText);
       if (!cmd) {
         await ctx.reply("❌ Formato inválido. Usa /help para ver los comandos disponibles.");
+        return;
+      }
+
+      if (cmd.comparisonMode) {
+        await ctx.reply(`🔄 Comparando BOT vs FUTUROS para ${cmd.symbol}USDT en ${cmd.botIntent}...`);
+        const analysis = await compareBotVsFutures(cmd.symbol, cmd.botIntent);
+        await ctx.reply(analysis);
         return;
       }
 
