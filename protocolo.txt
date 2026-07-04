@@ -161,21 +161,15 @@ Volume Change: <50%< 50\%
 <50% (Prevents entering anomalous, unbacked volume spikes)
 ATR (1h): >2%> 2\%
 >2% (Ensures sufficient grid oscillation)
-Volatility: 5%5\%
-5% to 25%25\%
-25%
 ADX (1h): 2525
 25 to 3535
 35 (Confirms established trend strength)
 RSI (1h): 5454
 54 to 6464
 64 (Centered range to avoid overbought exhaustion)
-RSI (4h): 5050
-50 to 5858
-58 (Shifted down from 54-64 — captures momentum before it approaches the overbought/upper-band zone, leaving more room to the resistance)
-ADX (4h): 1818
-18 to 2828
-28 (Tightened from 18-35 — favors younger 4H trends not yet mature/extended toward resistance)
+ADX (4h): 1515
+15 to 2525
+25 (Tightened from 15-25 — favors younger 4H trends not yet mature/extended toward resistance)
 
 
 Bot Short (Bearish Momentum Screener)
@@ -186,8 +180,7 @@ Price Change (24h): −3%-3\%
 0% (Tightened from -5% to 0% — avoids entries where price already fell significantly, i.e., an exhausted move)
 Liquidity & Volatility: Same volume, volume change, volatility, and ATR filters as Bot Long (>300K USD> 300\text{K USD}
 >300K USD, <50%< 50\%
-<50%, Volatility 5−25%5-25\%
-5−25%, ATR 1h>2%1\text{h} > 2\%
+<50%, ATR 1h>2%1\text{h} > 2\%
 1h>2%).
 ADX (1h): 2525
 25 to 3535
@@ -195,12 +188,9 @@ ADX (1h): 2525
 RSI (1h): 3333
 33 to 4545
 45 (More extreme/aggressive range to catch heavy distribution)
-RSI (4h): 4242
-42 to 5050
-50 (Shifted up from 33-45 — mirrors the long-side logic: captures the bearish turn early, before reaching extreme oversold, leaving more room to the downside)
-ADX (4h): 1818
-18 to 2828
-28 (Tightened from 18-35 — favors younger, not-yet-extended 4H downtrends)
+ADX (4h): 1515
+15 to 2525
+25 (Tightened from 15-25 — favors younger, not-yet-extended 4H downtrends)
 
 
 
