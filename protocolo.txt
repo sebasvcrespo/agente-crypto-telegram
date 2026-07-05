@@ -169,7 +169,8 @@ RSI (1h): 5454
 64 (Centered range to avoid overbought exhaustion)
 ADX (4h): 1515
 15 to 2525
-25 (Tightened from 15-25 — favors younger 4H trends not yet mature/extended toward resistance)
+<<<<<<< HEAD
+25 (Adjusted from 18-28 — favors younger 4H trends not yet mature/extended toward resistance)
 
 
 Bot Short (Bearish Momentum Screener)
@@ -178,7 +179,7 @@ Bot Short (Bearish Momentum Screener)
 Price Change (24h): −3%-3\%
 −3% to 0%0\%
 0% (Tightened from -5% to 0% — avoids entries where price already fell significantly, i.e., an exhausted move)
-Liquidity & Volatility: Same volume, volume change, volatility, and ATR filters as Bot Long (>300K USD> 300\text{K USD}
+Liquidity: Same volume, volume change, and ATR filters as Bot Long (>300K USD> 300\text{K USD}
 >300K USD, <50%< 50\%
 <50%, ATR 1h>2%1\text{h} > 2\%
 1h>2%).
@@ -190,7 +191,8 @@ RSI (1h): 3333
 45 (More extreme/aggressive range to catch heavy distribution)
 ADX (4h): 1515
 15 to 2525
-25 (Tightened from 15-25 — favors younger, not-yet-extended 4H downtrends)
+<<<<<<< HEAD
+25 (Adjusted from 18-28 — favors younger, not-yet-extended 4H downtrends)
 
 
 
