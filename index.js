@@ -95,6 +95,24 @@ ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : 
   return output;
 }
 
+function formatTickerText(ticker, label = "DATOS 24H") {
+  if (!ticker) {
+    return `--- ${label} ---\n• Price Change: N/A\n• Volume (24h): N/A\n• Volume Change: N/A\n`;
+  }
+
+  const pc = ticker.percentage !== undefined
+    ? `${ticker.percentage > 0 ? "+" : ""}${ticker.percentage.toFixed(2)}%`
+    : "N/A";
+
+  const vol = ticker.quoteVolume !== undefined
+    ? `$${Number(ticker.quoteVolume).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+    : "N/A";
+
+  const vc = "N/A";
+
+  return `--- ${label} ---\n• Price Change: ${pc}\n• Volume (24h): ${vol}\n• Volume Change: ${vc}\n`;
+}
+
 async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -123,6 +141,15 @@ async function fetchMarketDataForPair(symbol, isFutures = true, timeframes = ["1
     console.log(`📊 ${exchangeName} ${symbol}: ${tf}=${ohlcv.length} velas`);
     results[tf] = ohlcv;
   }
+
+  try {
+    const ticker = await ex.fetchTicker(symbol);
+    results._ticker = ticker;
+  } catch (e) {
+    console.log(`⚠️ No se pudo obtener ticker 24h para ${symbol}: ${e.message}`);
+    results._ticker = null;
+  }
+
   return results;
 }
 
@@ -186,7 +213,8 @@ async function tryWithFallback(messages, modelIndex = 0) {
   }
 }
 
-async function analyzeWithAI(indicatorsText) {
+async function analyzeWithAI(indicatorsText, ticker = null) {
+  const tickerText = formatTickerText(ticker, "DATOS 24H BTC");
   return tryWithFallback([
     {
       role: "user",
@@ -194,16 +222,17 @@ async function analyzeWithAI(indicatorsText) {
 
 DATOS DEL MERCADO:
 ${indicatorsText}
-
+${tickerText}
 PROTOCOLO DE TRADING:
 ${protocolo}
 
 INSTRUCCIONES:
-1. Sigue el checklist del punto 12 del protocolo
-2. Determina: BOT LONG, BOT SHORT o NO TRADE
-3. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
-4. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
-5. NO muestres capital ni cálculos intermedios
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Sigue el checklist del punto 12 del protocolo
+3. Determina: BOT LONG, BOT SHORT o NO TRADE
+4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+5. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
+6. NO muestres capital ni cálculos intermedios
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
@@ -243,25 +272,28 @@ async function analyzePair(base, timeframes = ["1h", "4h"]) {
   const pairIndicators = getLatestIndicators(pairResult.data["1h"], pairResult.data["4h"]);
   const btcText = formatIndicatorsText(btcIndicators);
   const pairText = formatIndicatorsText(pairIndicators);
+  const btcTickerText = formatTickerText(btcResult.data._ticker, "DATOS 24H BTC");
+  const pairTickerText = formatTickerText(pairResult.data._ticker, "DATOS 24H " + pairResult.symbol);
 
   const content = `Eres un trader profesional de criptomonedas.
 
 --- CONTEXTO BTC (solo informativo, sin recomendación) ---
 ${btcText}
-
+${btcTickerText}
 --- ANÁLISIS DEL PAR ${pairResult.symbol} (${pairResult.market}) ---
 ${pairText}
-
+${pairTickerText}
 PROTOCOLO DE TRADING:
 ${protocolo}
 
 INSTRUCCIONES:
-1. Primero da un breve panorama de BTC (2-3 líneas, solo contexto, sin recomendación de trade)
-2. Luego analiza ${pairResult.symbol} siguiendo ESTRICTAMENTE el protocolo (punto 12 del checklist)
-3. Determina: BOT LONG, BOT SHORT o NO TRADE
-4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
-5. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
-6. NO muestres capital ni cálculos intermedios
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Primero da un breve panorama de BTC (2-3 líneas, solo contexto, sin recomendación de trade)
+3. Luego analiza ${pairResult.symbol} siguiendo ESTRICTAMENTE el protocolo (punto 12 del checklist)
+4. Determina: BOT LONG, BOT SHORT o NO TRADE
+5. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+6. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
+7. NO muestres capital ni cálculos intermedios
 
 RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del par:
 
@@ -284,12 +316,13 @@ async function chatWithAI(userMessage) {
   const btcData = await fetchMarketData(["1h", "4h"]);
   const btcIndicators = getLatestIndicators(btcData["1h"], btcData["4h"]);
   const btcText = formatIndicatorsText(btcIndicators);
+  const tickerText = formatTickerText(btcData._ticker, "DATOS 24H BTC");
 
   const content = `Eres un asistente trader experto en criptomonedas. Respondes preguntas sobre crypto, trading, análisis técnico, etc.
 
 DATOS ACTUALES DE BTC/USDT (para contexto de mercado):
 ${btcText}
-
+${tickerText}
 El usuario pregunta:
 ${userMessage}
 
@@ -472,24 +505,26 @@ async function analyzeBotOpportunity(symbol, direction, useFutures = null) {
   
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
   const pairText = formatIndicatorsText(pairIndicators);
-  
+  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
+
   const marketType = market === "futuros" ? "Futures" : "Spot";
-  
+
   return openRouterChat([{
     role: "user",
     content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${direction.toUpperCase()} en ${sym} (${marketType}) siguiendo ESTRICTAMENTE el protocolo.
 
 DATOS DEL PAR ${sym} (${marketType}):
 ${pairText}
-
+${tickerText}
 PROTOCOLO DE TRADING:
 ${protocolo}
 
 INSTRUCCIONES:
-1. Aplica el checklist del punto 12 del protocolo
-2. Determina: ✅ BOT ${direction.toUpperCase()} o ❌ NO TRADE
-3. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
-4. Si es ${direction.toUpperCase()}: calcula SL, rango, grids, leverage
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Aplica el checklist del punto 12 del protocolo
+3. Determina: ✅ BOT ${direction.toUpperCase()} o ❌ NO TRADE
+4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+5. Si es ${direction.toUpperCase()}: calcula SL, rango, grids, leverage
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
@@ -524,6 +559,7 @@ async function compareBotVsFutures(symbol, direction) {
 
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
   const pairText = formatIndicatorsText(pairIndicators);
+  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
   const marketType = market === "futuros" ? "Futures" : "Spot";
 
   return openRouterChat([{
@@ -532,15 +568,16 @@ async function compareBotVsFutures(symbol, direction) {
 
 DATOS DEL PAR ${sym}:
 ${pairText}
-
+${tickerText}
 PROTOCOLO DE TRADING:
 ${protocolo}
 
 INSTRUCCIONES:
-1. Analiza los datos y determina los parámetros para BOT GRID (range, grids, SL, TP, leverage)
-2. Analiza los datos y determina los parámetros para FUTUROS (entry, SL, TP1, TP2, leverage)
-3. COMPARA ambas opciones y recomienda cuál es mejor según las condiciones actuales del mercado
-4. Si el mercado está en rango (ADX bajo), el BOT GRID suele ser mejor. Si hay tendencia fuerte (ADX alto), los FUTUROS pueden ser mejores.
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Analiza los datos y determina los parámetros para BOT GRID (range, grids, SL, TP, leverage)
+3. Analiza los datos y determina los parámetros para FUTUROS (entry, SL, TP1, TP2, leverage)
+4. COMPARA ambas opciones y recomienda cuál es mejor según las condiciones actuales del mercado
+5. Si el mercado está en rango (ADX bajo), el BOT GRID suele ser mejor. Si hay tendencia fuerte (ADX alto), los FUTUROS pueden ser mejores.
 
 RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
 
@@ -601,7 +638,7 @@ async function runHourlyAnalysis() {
     const indicatorsText = formatIndicatorsText(indicators);
 
     console.log("🧠 Enviando a OpenRouter para análisis...");
-    const analysis = await analyzeWithAI(indicatorsText);
+    const analysis = await analyzeWithAI(indicatorsText, marketData._ticker);
 
     console.log("📤 Enviando resultado a Telegram...");
     await sendSafeTelegram(analysis);

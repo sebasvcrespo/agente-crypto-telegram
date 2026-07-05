@@ -171,8 +171,9 @@ RSI (1h): 5454
 64 (Centered range to avoid overbought exhaustion)
 ADX (4h): 1515
 15 to 2525
-<<<<<<< HEAD
 25 (Adjusted from 18-28 — favors younger 4H trends not yet mature/extended toward resistance)
+
+Nota: Si Price Change 24h, Volume (24h) o Volume Change no están disponibles (N/A) para un par, esos filtros específicos se omiten y se procede con el análisis usando todos los demás parámetros disponibles.
 
 
 Bot Short (Bearish Momentum Screener)
@@ -193,9 +194,9 @@ RSI (1h): 3333
 45 (More extreme/aggressive range to catch heavy distribution)
 ADX (4h): 1515
 15 to 2525
-<<<<<<< HEAD
 25 (Adjusted from 18-28 — favors younger, not-yet-extended 4H downtrends)
 
+Nota: Si Price Change 24h, Volume (24h) o Volume Change no están disponibles (N/A) para un par, esos filtros específicos se omiten y se procede con el análisis usando todos los demás parámetros disponibles.
 
 
 WHAT REMAINS UNCHANGED FROM ORIGINAL PROTOCOL
