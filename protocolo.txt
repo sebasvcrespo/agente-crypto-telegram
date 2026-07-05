@@ -16,14 +16,16 @@ Never widen limits symmetrically "by feel" (e.g., adding a round $2,000 buffer) 
 
 
 
-2. GRID COUNT — Variable, Based on Grid Profit Target
+2. GRID COUNT — Derived from Structural SL/TP
 
-Number of Grids=Range %Target Grid Profit %\text{Number of Grids} = \frac{\text{Range } \%}{\text{Target Grid Profit } \%}Number of Grids=Target Grid Profit %Range %​
-Volatility ContextTarget Grid ProfitHigh (ATR > 4%)1.0% – 1.2%Medium (ATR 2-4%)0.75% – 1.0%Low (ATR < 2%)0.5% – 0.75%Micro-cap / very high volatility1.2% – 1.5%
+Number of Grids = Range % / Target Grid Profit %
 
+Range is defined by the structural SL and TP (see points 1 and 3).
+Target Grid Profit per grid: 0.7% to 0.9%, selected according to volatility:
+- Higher volatility → 0.9%
+- Lower volatility → 0.7%
 
-Operational limits: Minimum 15 grids, maximum 30 grids. If calculation falls outside, adjust the grid profit target (not the range) to bring grids back within 15-30.
-Critical for narrow ranges (e.g., BTC short setups): if the range is naturally narrow (~10-15%), grids will land near the 15 minimum — this is correct and expected, not an error to "fix" by widening the range artificially.
+No artificial grid limits. The resulting number of grids is whatever the formula produces. The grid profit target can be adjusted within the 0.7%–0.9% range to obtain a practical grid count.
 
 
 
