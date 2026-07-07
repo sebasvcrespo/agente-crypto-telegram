@@ -177,23 +177,28 @@ async function fetchBestEffort(base, timeframes = ["1h", "4h"]) {
   }
 }
 
-const CLAUDE_MODELS = [
-  "anthropic/claude-3-5-sonnet",
-  "anthropic/claude-3-7-sonnet",
+const AI_MODELS = [
+  "anthropic/claude-sonnet-4.6",
+  "google/gemini-2.5-pro",
+  "openai/gpt-5",
+  "deepseek/deepseek-v3.2",
+  "qwen/qwen3.5-plus-20260420",
+  "moonshotai/kimi-k2.5",
+  "z-ai/glm-5",
   "google/gemini-2.5-flash"
 ];
 
 async function tryWithFallback(messages, modelIndex = 0) {
-  if (modelIndex >= CLAUDE_MODELS.length) {
+  if (modelIndex >= AI_MODELS.length) {
     throw new Error("All models failed");
   }
   
   try {
-    console.log(`🧠 Usando modelo: ${CLAUDE_MODELS[modelIndex]}`);
+    console.log(`🧠 Usando modelo: ${AI_MODELS[modelIndex]}`);
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
-        model: CLAUDE_MODELS[modelIndex],
+        model: AI_MODELS[modelIndex],
         messages
       },
       {
@@ -208,7 +213,7 @@ async function tryWithFallback(messages, modelIndex = 0) {
     );
     return response.data.choices[0].message.content;
   } catch (error) {
-    console.warn(`⚠️ Modelo ${CLAUDE_MODELS[modelIndex]} falló, intentando siguiente...`);
+    console.warn(`⚠️ Modelo ${AI_MODELS[modelIndex]} falló, intentando siguiente...`);
     return tryWithFallback(messages, modelIndex + 1);
   }
 }
