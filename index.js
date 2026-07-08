@@ -36,8 +36,7 @@ http.createServer((req, res) => {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
-const futuresExchange = new ccxt.kucoinfutures();
-const spotExchange = new ccxt.kucoin();
+const exchange = new ccxt.bitget({ options: { defaultType: 'swap' } });
 
 let botStatus = "Cerrado";
 let chatId = null;
@@ -117,33 +116,30 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchMarketDataForPair(symbol, isFutures = true, timeframes = ["1h", "4h"]) {
-  const ex = isFutures ? futuresExchange : spotExchange;
-  const exchangeName = isFutures ? "KuCoin Futures" : "KuCoin Spot";
-  
+async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"]) {
   const results = {};
   for (const tf of timeframes) {
     let ohlcv = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        ohlcv = await ex.fetchOHLCV(symbol, tf, undefined, 100);
+        ohlcv = await exchange.fetchOHLCV(symbol, tf, undefined, 100);
         break;
       } catch (e) {
         if (e.message?.includes("429") && attempt < 3) {
           const delay = attempt * 2000;
-          console.log(`⏳ Rate limit en ${exchangeName} ${tf}, esperando ${delay}ms (intento ${attempt}/3)...`);
+          console.log(`⏳ Rate limit en Bitget ${tf}, esperando ${delay}ms (intento ${attempt}/3)...`);
           await sleep(delay);
         } else {
           throw e;
         }
       }
     }
-    console.log(`📊 ${exchangeName} ${symbol}: ${tf}=${ohlcv.length} velas`);
+    console.log(`📊 Bitget ${symbol}: ${tf}=${ohlcv.length} velas`);
     results[tf] = ohlcv;
   }
 
   try {
-    const ticker = await ex.fetchTicker(symbol);
+    const ticker = await exchange.fetchTicker(symbol);
     results._ticker = ticker;
   } catch (e) {
     console.log(`⚠️ No se pudo obtener ticker 24h para ${symbol}: ${e.message}`);
@@ -158,23 +154,14 @@ async function fetchMarketData(timeframes = ["1h", "4h"]) {
   return result.data;
 }
 
-function symbolsForPair(base) {
-  const futuresSymbol = `${base}/USDT:USDT`;
-  const spotSymbol = `${base}/USDT`;
-  return { futuresSymbol, spotSymbol };
+function symbolForPair(base) {
+  return `${base}/USDT:USDT`;
 }
 
 async function fetchBestEffort(base, timeframes = ["1h", "4h"]) {
-  const { futuresSymbol, spotSymbol } = symbolsForPair(base);
-  try {
-    const data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
-    return { data, market: "futuros", symbol: futuresSymbol };
-  } catch (e) {
-    console.log(`⚠️ ${futuresSymbol} en futuros FALLÓ: ${e.message}. Esperando 3s antes de spot...`);
-    await sleep(3000);
-    const data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
-    return { data, market: "spot", symbol: spotSymbol };
-  }
+  const symbol = symbolForPair(base);
+  const data = await fetchMarketDataForPair(symbol, timeframes);
+  return { data, market: "futuros", symbol };
 }
 
 const AI_MODELS = [
@@ -423,20 +410,8 @@ function formatSingleIndicator(ind, tf, data) {
 
 async function getSingleIndicator(symbol, indicator, timeframe) {
   const timeframes = timeframe ? [timeframe] : ["1h", "4h"];
-  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
-  
-  let data, market, sym;
-  try {
-    data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
-    market = "futuros";
-    sym = futuresSymbol;
-  } catch (e) {
-    console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
-    await sleep(3000);
-    data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
-    market = "spot";
-    sym = spotSymbol;
-  }
+  const sym = symbolForPair(symbol);
+  const data = await fetchMarketDataForPair(sym, timeframes);
   
   if (timeframe && timeframes.length === 1) {
     const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
@@ -453,25 +428,13 @@ async function getSingleIndicator(symbol, indicator, timeframe) {
 }
 
 async function getAllIndicatorsForTimeframe(symbol, timeframe) {
-  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
-  
-  let data, market, sym;
-  try {
-    data = await fetchMarketDataForPair(futuresSymbol, true, [timeframe]);
-    market = "futuros";
-    sym = futuresSymbol;
-  } catch (e) {
-    console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
-    await sleep(3000);
-    data = await fetchMarketDataForPair(spotSymbol, false, [timeframe]);
-    market = "spot";
-    sym = spotSymbol;
-  }
+  const sym = symbolForPair(symbol);
+  const data = await fetchMarketDataForPair(sym, [timeframe]);
   
   const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
   const dec = decimalsForPrice(ind.precio);
   
-  return `📊 *${sym}* (${market}) - *${timeframe.toUpperCase()}*\n\n` +
+  return `📊 *${sym}* (Bitget Futures) - *${timeframe.toUpperCase()}*\n\n` +
     `Precio: $${ind.precio.toFixed(dec)}\n` +
     `Hora: ${ind.timestamp}\n\n` +
     `• ${formatSingleIndicator("RSI", timeframe, ind)}\n` +
@@ -481,44 +444,20 @@ async function getAllIndicatorsForTimeframe(symbol, timeframe) {
     `• ${formatSingleIndicator("SBR", timeframe, ind)}`;
 }
 
-async function analyzeBotOpportunity(symbol, direction, useFutures = null) {
+async function analyzeBotOpportunity(symbol, direction) {
   const timeframes = ["1h", "4h"];
-  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
-  
-  let data, market, sym;
-  if (useFutures === true) {
-    data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
-    market = "futuros";
-    sym = futuresSymbol;
-  } else if (useFutures === false) {
-    data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
-    market = "spot";
-    sym = spotSymbol;
-  } else {
-    try {
-      data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
-      market = "futuros";
-      sym = futuresSymbol;
-    } catch (e) {
-      console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
-      await sleep(3000);
-      data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
-      market = "spot";
-      sym = spotSymbol;
-    }
-  }
+  const sym = symbolForPair(symbol);
+  const data = await fetchMarketDataForPair(sym, timeframes);
   
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
   const pairText = formatIndicatorsText(pairIndicators);
   const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
 
-  const marketType = market === "futuros" ? "Futures" : "Spot";
-
   return openRouterChat([{
     role: "user",
-    content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${direction.toUpperCase()} en ${sym} (${marketType}) siguiendo ESTRICTAMENTE el protocolo.
+    content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${direction.toUpperCase()} en ${sym} (Bitget Futures) siguiendo ESTRICTAMENTE el protocolo.
 
-DATOS DEL PAR ${sym} (${marketType}):
+DATOS DEL PAR ${sym} (Bitget Futures):
 ${pairText}
 ${tickerText}
 PROTOCOLO DE TRADING:
@@ -547,29 +486,16 @@ SL/TP según protocolo: ${direction.toUpperCase() === "LONG" ? "SL es límite in
 
 async function compareBotVsFutures(symbol, direction) {
   const timeframes = ["1h", "4h"];
-  const { futuresSymbol, spotSymbol } = symbolsForPair(symbol);
-
-  let data, market, sym;
-  try {
-    data = await fetchMarketDataForPair(futuresSymbol, true, timeframes);
-    market = "futuros";
-    sym = futuresSymbol;
-  } catch (e) {
-    console.log(`⚠️ Fallback a spot para ${spotSymbol} en 3s...`);
-    await sleep(3000);
-    data = await fetchMarketDataForPair(spotSymbol, false, timeframes);
-    market = "spot";
-    sym = spotSymbol;
-  }
+  const sym = symbolForPair(symbol);
+  const data = await fetchMarketDataForPair(sym, timeframes);
 
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
   const pairText = formatIndicatorsText(pairIndicators);
   const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
-  const marketType = market === "futuros" ? "Futures" : "Spot";
 
   return openRouterChat([{
     role: "user",
-    content: `Eres un trader profesional de criptomonedas. Analiza si es mejor usar un BOT GRID o FUTUROS para una operación ${direction.toUpperCase()} en ${sym} (${marketType}).
+    content: `Eres un trader profesional de criptomonedas. Analiza si es mejor usar un BOT GRID o FUTUROS para una operación ${direction.toUpperCase()} en ${sym} (Bitget Futures).
 
 DATOS DEL PAR ${sym}:
 ${pairText}
@@ -753,9 +679,8 @@ bot.on("message:text", async (ctx) => {
       }
 
       if (cmd.botIntent) {
-        const market = cmd.isFutures ? "futuros" : null;
-        await ctx.reply(`🔍 Analizando oportunidad ${cmd.botIntent} para ${cmd.symbol}USDT (${market || "mejor disponible"})...`);
-        const analysis = await analyzeBotOpportunity(cmd.symbol, cmd.botIntent, cmd.isFutures ? true : undefined);
+        await ctx.reply(`🔍 Analizando oportunidad ${cmd.botIntent} para ${cmd.symbol}USDT...`);
+        const analysis = await analyzeBotOpportunity(cmd.symbol, cmd.botIntent);
         await ctx.reply(analysis);
         return;
       }
@@ -801,7 +726,7 @@ bot.on("message:text", async (ctx) => {
   } catch (error) {
     console.error("❌ Error en handler message:text:", error.message);
     if (error.message && error.message.includes("does not have market")) {
-      await ctx.reply("❌ Ese par no existe en KuCoin. Verifica el ticker e intenta de nuevo.");
+      await ctx.reply("❌ Ese par no existe en Bitget. Verifica el ticker e intenta de nuevo.");
     } else {
       await ctx.reply("⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo.");
     }
