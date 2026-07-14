@@ -221,14 +221,15 @@ ${protocolo}
 INSTRUCCIONES:
 1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
 2. Sigue el checklist del punto 12 del protocolo
-3. Determina: BOT LONG, BOT SHORT o NO TRADE
+3. Determina: BOT LONG, BOT SHORT, BOT NEUTRAL o NO TRADE
 4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
 5. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
-6. NO muestres capital ni cálculos intermedios
+6. Si es NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
+7. NO muestres capital ni cálculos intermedios
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
-✅ BOT LONG (o ❌ BOT SHORT)
+✅ BOT LONG / ✅ BOT SHORT / ✅ BOT NEUTRAL
 • Entry: $XX.XXX
 • SL: $XX.XXX
 • TP: $XX.XXX
@@ -236,7 +237,7 @@ RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 • Grids: XX
 • Leverage: Xx
 
-Si la recomendación es LONG: SL es el límite inferior, TP el superior. Si es SHORT: SL es el límite superior, TP el inferior.`
+LONG: SL inferior, TP superior. SHORT: SL superior, TP inferior. NEUTRAL: Range donde opera, SL fuera del range en ambas direcciones.`
     }
   ]);
 }
@@ -282,14 +283,15 @@ INSTRUCCIONES:
 1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
 2. Primero da un breve panorama de BTC (2-3 líneas, solo contexto, sin recomendación de trade)
 3. Luego analiza ${pairResult.symbol} siguiendo ESTRICTAMENTE el protocolo (punto 12 del checklist)
-4. Determina: BOT LONG, BOT SHORT o NO TRADE
+4. Determina: BOT LONG, BOT SHORT, BOT NEUTRAL o NO TRADE
 5. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
 6. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción
-7. NO muestres capital ni cálculos intermedios
+7. Si es NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
+8. NO muestres capital ni cálculos intermedios
 
 RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del par:
 
-✅ BOT LONG (o ❌ BOT SHORT)
+✅ BOT LONG / ✅ BOT SHORT / ✅ BOT NEUTRAL
 • Entry: $XX.XXX
 • SL: $XX.XXX
 • TP: $XX.XXX
@@ -297,7 +299,7 @@ RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del p
 • Grids: XX
 • Leverage: Xx
 
-Si la recomendación es LONG: SL es el límite inferior, TP el superior. Si es SHORT: SL es el límite superior, TP el inferior.`;
+LONG: SL inferior, TP superior. SHORT: SL superior, TP inferior. NEUTRAL: Range donde opera, SL fuera del range en ambas direcciones.`;
 
   return openRouterChat([{ role: "user", content }]);
 }
@@ -355,10 +357,11 @@ function parseFlexibleCommand(text) {
   
   const hasLong = upperParts.includes("LONG") && !upperParts.includes("SHORT");
   const hasShort = upperParts.includes("SHORT") && !upperParts.includes("LONG");
+  const hasNeutral = upperParts.includes("NEUTRAL") && !hasLong && !hasShort;
   
   const hasBotKeyword = upperParts.includes("BOT");
   const hasComparisonMode = hasBotKeyword && isFutures;
-  const botIntent = (hasLong || hasShort) && (hasBotKeyword || isFutures) ? (hasLong ? "LONG" : "SHORT") : null;
+  const botIntent = (hasLong || hasShort || hasNeutral) && (hasBotKeyword || isFutures) ? (hasLong ? "LONG" : hasShort ? "SHORT" : "NEUTRAL") : null;
 
   return {
     symbol,
@@ -453,9 +456,12 @@ async function analyzeBotOpportunity(symbol, direction) {
   const pairText = formatIndicatorsText(pairIndicators);
   const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
 
+  const isNeutral = direction.toUpperCase() === "NEUTRAL";
+  const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
+
   return openRouterChat([{
     role: "user",
-    content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${direction.toUpperCase()} en ${sym} (Bitget Futures) siguiendo ESTRICTAMENTE el protocolo.
+    content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${directionLabel} en ${sym} (Bitget Futures) siguiendo ESTRICTAMENTE el protocolo.
 
 DATOS DEL PAR ${sym} (Bitget Futures):
 ${pairText}
@@ -466,13 +472,14 @@ ${protocolo}
 INSTRUCCIONES:
 1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
 2. Aplica el checklist del punto 12 del protocolo
-3. Determina: ✅ BOT ${direction.toUpperCase()} o ❌ NO TRADE
+3. Determina: ✅ BOT ${directionLabel} o ❌ NO TRADE
 4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
-5. Si es ${direction.toUpperCase()}: calcula SL, rango, grids, leverage
+5. Si es ${directionLabel}: calcula SL, rango, grids, leverage
+${isNeutral ? "6. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones" : ""}
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
-✅ BOT ${direction.toUpperCase()}
+✅ BOT ${directionLabel}
 • Entry: $XX.XXX
 • SL: $XX.XXX
 • TP: $XX.XXX
@@ -480,7 +487,7 @@ RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 • Grids: XX
 • Leverage: Xx
 
-SL/TP según protocolo: ${direction.toUpperCase() === "LONG" ? "SL es límite inferior, TP límite superior" : "SL es límite superior, TP límite inferior"}.`
+${isNeutral ? "NEUTRAL: Range donde opera el bot, SL fuera del range en ambas direcciones." : `SL/TP según protocolo: ${directionLabel === "LONG" ? "SL es límite inferior, TP límite superior" : "SL es límite superior, TP límite inferior"}.`}`
   }]);
 }
 
@@ -493,9 +500,12 @@ async function compareBotVsFutures(symbol, direction) {
   const pairText = formatIndicatorsText(pairIndicators);
   const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
 
+  const isNeutral = direction.toUpperCase() === "NEUTRAL";
+  const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
+
   return openRouterChat([{
     role: "user",
-    content: `Eres un trader profesional de criptomonedas. Analiza si es mejor usar un BOT GRID o FUTUROS para una operación ${direction.toUpperCase()} en ${sym} (Bitget Futures).
+    content: `Eres un trader profesional de criptomonedas. Analiza si es mejor usar un BOT GRID o FUTUROS para una operación ${directionLabel} en ${sym} (Bitget Futures).
 
 DATOS DEL PAR ${sym}:
 ${pairText}
@@ -508,11 +518,11 @@ INSTRUCCIONES:
 2. Analiza los datos y determina los parámetros para BOT GRID (range, grids, SL, TP, leverage)
 3. Analiza los datos y determina los parámetros para FUTUROS (entry, SL, TP1, TP2, leverage)
 4. COMPARA ambas opciones y recomienda cuál es mejor según las condiciones actuales del mercado
-5. Si el mercado está en rango (ADX bajo), el BOT GRID suele ser mejor. Si hay tendencia fuerte (ADX alto), los FUTUROS pueden ser mejores.
+5. Si el mercado está en rango (ADX bajo, RSI ~50), el BOT GRID (especialmente NEUTRAL) suele ser mejor. Si hay tendencia fuerte (ADX alto), los FUTUROS pueden ser mejores.
 
 RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
 
-📊 COMPARACIÓN ${sym} — ${direction.toUpperCase()}
+📊 COMPARACIÓN ${sym} — ${directionLabel}
 
 🔹 BOT GRID:
 • Entry: $XX.XXX
@@ -532,8 +542,7 @@ RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
 📌 RECOMENDACIÓN: [BOT GRID / FUTUROS]
 • Motivo: [explicación breve]
 
-Para LONG: SL es límite inferior, TP es límite superior.
-Para SHORT: SL es límite superior, TP es límite inferior.`
+${isNeutral ? "NEUTRAL: El bot grid opera comprando en el inferior del range y vendiendo en el superior. SL fuera del range en ambas direcciones." : `Para LONG: SL es límite inferior, TP es límite superior. Para SHORT: SL es límite superior, TP es límite inferior.`}`
   }]);
 }
 
@@ -616,9 +625,9 @@ bot.command("start", async (ctx) => {
       "• `Abierto` — Pausa el análisis automático\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`, `/BTC RSI 4h`, `/ADA ATR 15m`)\n" +
-      "• `/PAR BOT LONG|SHORT` — Análisis de oportunidad (ej: `/ETH BOT LONG`, `/ADA SHORT`)\n" +
+      "• `/PAR BOT LONG|SHORT|NEUTRAL` — Análisis de oportunidad (ej: `/ETH BOT LONG`, `/ADA BOT NEUTRAL`)\n" +
       "• `/PAR FUTUROS LONG|SHORT` — Análisis en futuros (ej: `/ETH FUTUROS LONG`)\n" +
-      "• `/PAR BOT O FUTUROS LONG|SHORT` — Compara bot vs futuros (ej: `/ETH BOT O FUTUROS LONG`)\n" +
+      "• `/PAR BOT O FUTUROS LONG|SHORT|NEUTRAL` — Compara bot vs futuros (ej: `/ETH BOT O FUTUROS NEUTRAL`)\n" +
       "• `/help` — Esta ayuda\n\n" +
       "*Indicadores:* ADX, RSI, ATR, BB, SBR\n" +
       "*Temporalidades:* 15m, 30m, 1h, 2h, 4h (default: 1h+4h)\n\n" +
@@ -636,7 +645,7 @@ bot.command("help", async (ctx) => {
     "📖 *Guía de comandos*\n\n" +
     "*Análisis completo:*\n" +
     "• `/ETH` , `/BTC` , `/ADA`\n" +
-    "  → Análisis completo con contexto BTC y recomendación\n\n" +
+    "  → Análisis completo con contexto BTC y recomendación (LONG, SHORT, NEUTRAL o NO TRADE)\n\n" +
     "*Todos los indicadores en una TF:*\n" +
     "• `/ETH 1h` — RSI, ADX, ATR, BB, SBR en 1H\n" +
     "• `/BTC 4h` — Todos los indicadores en 4H\n" +
@@ -649,10 +658,12 @@ bot.command("help", async (ctx) => {
     "*Análisis de oportunidad:*\n" +
     "• `/ETH BOT LONG` — ¿Es buena oportunidad para LONG?\n" +
     "• `/ETH BOT SHORT` — ¿Es buena oportunidad para SHORT?\n" +
+    "• `/ETH BOT NEUTRAL` — ¿Es bueno para bot neutral (rango lateral)?\n" +
     "• `/ETH FUTUROS LONG` — Configuración futuros LONG con SL/TP/entry/leverage\n" +
     "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT con SL/TP/entry/leverage\n" +
     "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros y recomienda el mejor\n" +
-    "• `/ETH BOT O FUTUROS SHORT` — Compara bot vs futuros y recomienda el mejor\n\n" +
+    "• `/ETH BOT O FUTUROS SHORT` — Compara bot vs futuros y recomienda el mejor\n" +
+    "• `/ETH BOT O FUTUROS NEUTRAL` — Compara bot neutral vs futuros\n\n" +
     "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
     { parse_mode: "Markdown" }
   );
@@ -751,7 +762,7 @@ bot.on("message:photo", async (ctx) => {
         content: [
           {
             type: "text",
-            text: `Eres un trader profesional. Analiza este gráfico siguiendo este protocolo:\n\n${protocolo}\n\nDetermina: ✅ BOT LONG, ❌ BOT SHORT o ❌ NO TRADE. Si es LONG/SHORT da: Entry, SL, TP, Range, Grids, Leverage. Máximo 10 líneas. Español.`
+            text: `Eres un trader profesional. Analiza este gráfico siguiendo este protocolo:\n\n${protocolo}\n\nDetermina: ✅ BOT LONG, ✅ BOT SHORT, ✅ BOT NEUTRAL o ❌ NO TRADE. Si es LONG/SHORT/NEUTRAL da: Entry, SL, TP, Range, Grids, Leverage. Máximo 10 líneas. Español.`
           },
           {
             type: "image_url",
