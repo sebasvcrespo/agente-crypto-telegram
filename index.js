@@ -146,8 +146,12 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"]) {
   if (bitgetError && Object.keys(results).length === 0) {
     console.log(`⚠️ Bitget no disponible para ${symbol}: ${bitgetError.message}`);
     console.log(`🔄 Intentando fallback a Pionex...`);
-    const pionexData = await fetchFromPionex(symbol, timeframes);
-    return { data: pionexData, exchange: "pionex" };
+    try {
+      const pionexData = await fetchFromPionex(symbol, timeframes);
+      return { data: pionexData, exchange: "pionex" };
+    } catch (e) {
+      throw new Error(`Par ${symbol} no disponible en ningún exchange`);
+    }
   }
 
   try {
@@ -256,6 +260,11 @@ async function fetchFromPionex(symbol, timeframes = ["1h", "4h"]) {
   } catch (e) {
     console.log(`⚠️ Pionex ticker falló ${symbol}: ${e.message}`);
     results._ticker = null;
+  }
+
+  const hasData = timeframes.some(tf => results[tf]?.length > 0);
+  if (!hasData) {
+    throw new Error(`Par ${symbol} no disponible en Pionex`);
   }
 
   return results;
