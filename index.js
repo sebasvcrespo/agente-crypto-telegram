@@ -116,7 +116,46 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"]) {
+async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"], source = "auto") {
+  // Si source es "pionex" → solo Pionex
+  if (source === "pionex") {
+    const data = await fetchFromPionex(symbol, timeframes);
+    return { data, exchange: "pionex" };
+  }
+
+  // Si source es "bitget" → solo Bitget (sin fallback)
+  if (source === "bitget") {
+    const results = {};
+    let lastError = null;
+    for (const tf of timeframes) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const ohlcv = await exchange.fetchOHLCV(symbol, tf, undefined, 100);
+          console.log(`📊 Bitget ${symbol}: ${tf}=${ohlcv.length} velas`);
+          results[tf] = ohlcv;
+          break;
+        } catch (e) {
+          if (e.message?.includes("429") && attempt < 3) {
+            await sleep(attempt * 2000);
+          } else {
+            lastError = e;
+            break;
+          }
+        }
+      }
+    }
+    if (Object.keys(results).length === 0) {
+      throw new Error(`Par ${symbol} no disponible en Bitget: ${lastError?.message}`);
+    }
+    try {
+      results._ticker = await exchange.fetchTicker(symbol);
+    } catch (e) {
+      results._ticker = null;
+    }
+    return { data: results, exchange: "bitget" };
+  }
+
+  // source === "auto" → comportamiento actual (Bitget primario, Pionex fallback)
   let bitgetError = null;
   const results = {};
 
@@ -433,18 +472,30 @@ Responde de forma útil, clara y concisa. Si te pregunta sobre un par específic
 
 const VALID_INDICATORS = ["ADX", "RSI", "ATR", "BB", "SBR", "SELLBUYRATE"];
 const VALID_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h"];
+const VALID_SOURCES = ["BITGET", "PIONEX"];
 
 function parseFlexibleCommand(text) {
   const cleanText = text.replace(/^\//, "").trim();
   const upperParts = cleanText.toUpperCase().split(/\s+/).map(p => p.replace(/[?!.,]+$/, ""));
-  const lowerParts = cleanText.toLowerCase().split(/\s+/);
   
   if (upperParts.length === 0) return null;
   
   const symbol = upperParts[0].replace(/USDT\s*$/, "").trim();
   if (!symbol) return null;
-  
-  const firstParam = upperParts[1] || null;
+
+  // Detectar fuente (BITGET o PIONEX)
+  let source = null;
+  for (let i = 1; i < upperParts.length; i++) {
+    if (VALID_SOURCES.includes(upperParts[i])) {
+      source = upperParts[i].toLowerCase();
+      break;
+    }
+  }
+
+  // Filtrar partes que no son fuente
+  const parts = upperParts.filter(p => !VALID_SOURCES.includes(p));
+
+  const firstParam = parts[1] || null;
   const isIndicator = VALID_INDICATORS.includes(firstParam);
   const isTimeframe = VALID_TIMEFRAMES.includes(firstParam?.toLowerCase());
   
@@ -455,19 +506,24 @@ function parseFlexibleCommand(text) {
   if (isTimeframe) {
     timeframe = firstParam.toLowerCase();
     allIndicators = true;
-  } else if (!isIndicator && upperParts[2] && VALID_TIMEFRAMES.includes(upperParts[2].toLowerCase())) {
-    timeframe = upperParts[2].toLowerCase();
+  } else if (!isIndicator && parts[2] && VALID_TIMEFRAMES.includes(parts[2].toLowerCase())) {
+    timeframe = parts[2].toLowerCase();
   }
   
-  const isFutures = upperParts.includes("FUTUROS") || upperParts.includes("FUTURES");
+  const isFutures = parts.includes("FUTUROS") || parts.includes("FUTURES");
   
-  const hasLong = upperParts.includes("LONG") && !upperParts.includes("SHORT");
-  const hasShort = upperParts.includes("SHORT") && !upperParts.includes("LONG");
-  const hasNeutral = upperParts.includes("NEUTRAL") && !hasLong && !hasShort;
+  const hasLong = parts.includes("LONG") && !parts.includes("SHORT");
+  const hasShort = parts.includes("SHORT") && !parts.includes("LONG");
+  const hasNeutral = parts.includes("NEUTRAL") && !hasLong && !hasShort;
   
-  const hasBotKeyword = upperParts.includes("BOT");
+  const hasBotKeyword = parts.includes("BOT");
   const hasComparisonMode = hasBotKeyword && isFutures;
-  const botIntent = (hasLong || hasShort || hasNeutral) && (hasBotKeyword || isFutures) ? (hasLong ? "LONG" : hasShort ? "SHORT" : "NEUTRAL") : null;
+
+  // Si hay source, el botIntent se activa solo con LONG/SHORT/NEUTRAL
+  const hasDirectionKeyword = hasLong || hasShort || hasNeutral;
+  const botIntent = hasDirectionKeyword && (hasBotKeyword || isFutures || source)
+    ? (hasLong ? "LONG" : hasShort ? "SHORT" : "NEUTRAL")
+    : null;
 
   return {
     symbol,
@@ -475,6 +531,7 @@ function parseFlexibleCommand(text) {
     timeframe,
     allIndicators,
     isFutures,
+    source,
     botIntent,
     comparisonMode: hasComparisonMode && !!botIntent
   };
@@ -652,6 +709,100 @@ ${isNeutral ? "NEUTRAL: El bot grid opera comprando en el inferior del range y v
   }]);
 }
 
+async function analyzePairWithSource(base, source, direction) {
+  const timeframes = ["1h", "4h"];
+  const sym = symbolForPair(base);
+  const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, timeframes, source);
+
+  const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
+  const pairText = formatIndicatorsText(pairIndicators);
+  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
+
+  const isNeutral = direction.toUpperCase() === "NEUTRAL";
+  const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
+  const sourceLabel = sourceExchange === "pionex" ? "Pionex" : "Bitget";
+
+  if (isNeutral) {
+    return openRouterChat([{
+      role: "user",
+      content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT NEUTRAL en ${sym} (${sourceLabel}) siguiendo ESTRICTAMENTE el protocolo.
+
+DATOS DEL PAR ${sym} (${sourceLabel}):
+${pairText}
+${tickerText}
+PROTOCOLO DE TRADING:
+${protocolo}
+
+INSTRUCCIONES:
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Aplica el checklist del punto 12 del protocolo
+3. Determina: ✅ BOT NEUTRAL o ❌ NO TRADE
+4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+5. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
+
+RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
+
+✅ BOT NEUTRAL
+• Entry: $XX.XXX
+• SL: $XX.XXX
+• TP: $XX.XXX
+• Range: $XX.XXX - $XX.XXX
+• Grids: XX
+• Leverage: Xx
+
+NEUTRAL: Range donde opera el bot, SL fuera del range en ambas direcciones.`
+    }]);
+  }
+
+  return openRouterChat([{
+    role: "user",
+    content: `Eres un trader profesional. Analiza si es conveniente abrir un BOT o FUTUROS para ${directionLabel} en ${sym} (${sourceLabel}).
+
+FUENTE DE DATOS: ${sourceLabel}
+DATOS DEL PAR ${sym}:
+${pairText}
+${tickerText}
+PROTOCOLO DE TRADING:
+${protocolo}
+
+INSTRUCCIONES:
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Analiza si los indicadores cumplen los parámetros del protocolo para ${directionLabel}
+3. Evalúa AMBAS opciones: BOT GRID y FUTUROS
+4. Para cada opción, determina si cumple los filtros del Screener (Sección 13)
+5. Si AMBAS no cumplen → "❌ NO TRADE" con motivo
+6. Si solo Bot cumple → muestra Bot con 100% de capital
+7. Si solo Futuros cumple → muestra Futuros con 100% de capital
+8. Si ambas cumplen → distribuye el capital recomendado entre ambas (ej: 60% Bot / 40% Futuros)
+
+RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
+
+📊 ANÁLISIS ${sym} — ${directionLabel} (${sourceLabel})
+
+🔹 BOT GRID:
+• Entry: $XX.XXX
+• Range: $XX.XXX - $XX.XXX
+• Grids: XX
+• SL: $XX.XXX
+• TP: $XX.XXX
+• Leverage: Xx
+• Capital: XX%
+
+🔹 FUTUROS:
+• Entry: $XX.XXX
+• SL: $XX.XXX
+• TP1: $XX.XXX
+• TP2: $XX.XXX
+• Leverage: Xx
+• Capital: XX%
+
+📌 RECOMENDACIÓN: [BOT GRID / FUTUROS / AMBOS]
+• Motivo: [explicación breve]
+
+${directionLabel === "LONG" ? "LONG: SL es límite inferior, TP es límite superior." : "SHORT: SL es límite superior, TP es límite inferior."}`
+  }]);
+}
+
 async function sendSafeTelegram(text) {
   if (!chatId) {
     console.warn("⚠️ sendSafeTelegram: no hay chatId, mensaje no enviado");
@@ -675,10 +826,11 @@ async function runHourlyAnalysis() {
     return;
   }
 
-  console.log("🔄 Iniciando análisis horario de BTCUSDT...");
+  console.log("🔄 Iniciando análisis horario de BTCUSDT (fuente: Pionex)...");
   try {
-    const marketData = await fetchMarketData(["1h", "4h"]);
-    console.log("✅ Datos OHLCV obtenidos");
+    const symbol = symbolForPair("BTC");
+    const marketData = await fetchFromPionex(symbol, ["1h", "4h"]);
+    console.log("✅ Datos OHLCV de Pionex obtenidos");
 
     const indicators = getLatestIndicators(marketData["1h"], marketData["4h"]);
     const indicatorsText = formatIndicatorsText(indicators);
@@ -727,14 +879,17 @@ bot.command("start", async (ctx) => {
       "*Comandos básicos:*\n" +
       "• `/PAR` — Analiza cualquier par con contexto BTC (ej: `/ETH`, `/BTC`)\n" +
       "• `/PAR TF` — Todos los indicadores en una temporalidad (ej: `/ETH 1h`, `/ADA 4h`)\n" +
-      "• `Cerrado` — Activa el análisis automático de BTC cada hora\n" +
+      "• `Cerrado` — Activa el análisis automático de BTC cada hora (usa Pionex)\n" +
       "• `Abierto` — Pausa el análisis automático\n\n" +
       "*Comandos avanzados:*\n" +
-      "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`, `/BTC RSI 4h`, `/ADA ATR 15m`)\n" +
-      "• `/PAR BOT LONG|SHORT|NEUTRAL` — Análisis de oportunidad (ej: `/ETH BOT LONG`, `/ADA BOT NEUTRAL`)\n" +
+      "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
+      "• `/PAR FUENTE DIRECCION` — Bot+Futuros con fuente (ej: `/ETH Pionex Long`, `/BTC Bitget Short`)\n" +
+      "• `/PAR FUENTE NEUTRAL` — Solo Bot Neutral (ej: `/ETH Pionex Neutral`)\n" +
+      "• `/PAR BOT LONG|SHORT|NEUTRAL` — Análisis sin fuente (ej: `/ETH BOT LONG`)\n" +
       "• `/PAR FUTUROS LONG|SHORT` — Análisis en futuros (ej: `/ETH FUTUROS LONG`)\n" +
-      "• `/PAR BOT O FUTUROS LONG|SHORT|NEUTRAL` — Compara bot vs futuros (ej: `/ETH BOT O FUTUROS NEUTRAL`)\n" +
+      "• `/PAR BOT O FUTUROS LONG|SHORT` — Compara bot vs futuros\n" +
       "• `/help` — Esta ayuda\n\n" +
+      "*Fuentes:* `Bitget`, `Pionex`\n" +
       "*Indicadores:* ADX, RSI, ATR, BB, SBR\n" +
       "*Temporalidades:* 15m, 30m, 1h, 2h, 4h (default: 1h+4h)\n\n" +
       `Estado actual: *${botStatus}*`,
@@ -751,25 +906,30 @@ bot.command("help", async (ctx) => {
     "📖 *Guía de comandos*\n\n" +
     "*Análisis completo:*\n" +
     "• `/ETH` , `/BTC` , `/ADA`\n" +
-    "  → Análisis completo con contexto BTC y recomendación (LONG, SHORT, NEUTRAL o NO TRADE)\n\n" +
+    "  → Análisis completo con contexto BTC y recomendación\n\n" +
     "*Todos los indicadores en una TF:*\n" +
     "• `/ETH 1h` — RSI, ADX, ATR, BB, SBR en 1H\n" +
-    "• `/BTC 4h` — Todos los indicadores en 4H\n" +
-    "• `/ADA 15m` — Todos los indicadores en 15m\n\n" +
+    "• `/BTC 4h` — Todos los indicadores en 4H\n\n" +
     "*Indicadores específicos:*\n" +
     "• `/ETH ADX 1h` — ADX con DI+/DI- en 1H\n" +
     "• `/ETH RSI 4h` — RSI en 4H\n" +
-    "• `/BTC ATR 15m` — ATR en 15m\n" +
     "• `/ADA BB` — Bollinger Bands en 1h+4h\n\n" +
-    "*Análisis de oportunidad:*\n" +
+    "*Análisis con fuente (Bot + Futuros):*\n" +
+    "• `/ETH Pionex Long` — Bot Long + Futuros Long (datos Pionex)\n" +
+    "• `/ETH Bitget Short` — Bot Short + Futuros Short (datos Bitget)\n" +
+    "• `/BTC Pionex Neutral` — Solo Bot Neutral (datos Pionex)\n" +
+    "• `/ADA Bitget Long` — Bot Long + Futuros Long (datos Bitget)\n\n" +
+    "*Análisis sin fuente (comportamiento anterior):*\n" +
     "• `/ETH BOT LONG` — ¿Es buena oportunidad para LONG?\n" +
     "• `/ETH BOT SHORT` — ¿Es buena oportunidad para SHORT?\n" +
-    "• `/ETH BOT NEUTRAL` — ¿Es bueno para bot neutral (rango lateral)?\n" +
-    "• `/ETH FUTUROS LONG` — Configuración futuros LONG con SL/TP/entry/leverage\n" +
-    "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT con SL/TP/entry/leverage\n" +
-    "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros y recomienda el mejor\n" +
-    "• `/ETH BOT O FUTUROS SHORT` — Compara bot vs futuros y recomienda el mejor\n" +
-    "• `/ETH BOT O FUTUROS NEUTRAL` — Compara bot neutral vs futuros\n\n" +
+    "• `/ETH BOT NEUTRAL` — ¿Es bueno para bot neutral?\n" +
+    "• `/ETH FUTUROS LONG` — Configuración futuros LONG\n" +
+    "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT\n" +
+    "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros\n\n" +
+    "*Análisis horario automático:*\n" +
+    "• `Cerrado` — Activa (usa Pionex)\n" +
+    "• `Abierto` — Pausa\n\n" +
+    "*Fuentes:* `Bitget`, `Pionex`\n" +
     "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
     { parse_mode: "Markdown" }
   );
@@ -788,13 +948,24 @@ bot.on("message:text", async (ctx) => {
         return;
       }
 
-      if (cmd.comparisonMode) {
+      // Comparación bot vs futuros (sin fuente)
+      if (cmd.comparisonMode && !cmd.source) {
         await ctx.reply(`🔄 Comparando BOT vs FUTUROS para ${cmd.symbol}USDT en ${cmd.botIntent}...`);
         const analysis = await compareBotVsFutures(cmd.symbol, cmd.botIntent);
         await ctx.reply(analysis);
         return;
       }
 
+      // Con fuente seleccionada: analiza Bot+Futuros (o solo Neutral)
+      if (cmd.source && cmd.botIntent) {
+        const sourceLabel = cmd.source === "pionex" ? "Pionex" : "Bitget";
+        await ctx.reply(`🔍 Analizando ${cmd.symbol}USDT con datos de ${sourceLabel} (${cmd.botIntent})...`);
+        const analysis = await analyzePairWithSource(cmd.symbol, cmd.source, cmd.botIntent);
+        await ctx.reply(analysis);
+        return;
+      }
+
+      // Bot/Futuros sin fuente (comportamiento actual)
       if (cmd.botIntent) {
         await ctx.reply(`🔍 Analizando oportunidad ${cmd.botIntent} para ${cmd.symbol}USDT...`);
         const analysis = await analyzeBotOpportunity(cmd.symbol, cmd.botIntent);
