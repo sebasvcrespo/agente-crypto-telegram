@@ -225,7 +225,7 @@ const PIONEX_INTERVALS = {
 };
 
 function symbolToPionex(symbol) {
-  return symbol.replace("/", "_").replace(":USDT", "");
+  return symbol.replace("/", "_").replace(":USDT", "_PERP");
 }
 
 function intervalToPionex(tf) {
