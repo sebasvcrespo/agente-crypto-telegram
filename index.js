@@ -117,7 +117,9 @@ async function sleep(ms) {
 }
 
 async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"]) {
+  let bitgetError = null;
   const results = {};
+
   for (const tf of timeframes) {
     let ohlcv = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -130,12 +132,22 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"]) {
           console.log(`⏳ Rate limit en Bitget ${tf}, esperando ${delay}ms (intento ${attempt}/3)...`);
           await sleep(delay);
         } else {
-          throw e;
+          bitgetError = e;
+          break;
         }
       }
     }
-    console.log(`📊 Bitget ${symbol}: ${tf}=${ohlcv.length} velas`);
-    results[tf] = ohlcv;
+    if (ohlcv) {
+      console.log(`📊 Bitget ${symbol}: ${tf}=${ohlcv.length} velas`);
+      results[tf] = ohlcv;
+    }
+  }
+
+  if (bitgetError && Object.keys(results).length === 0) {
+    console.log(`⚠️ Bitget no disponible para ${symbol}: ${bitgetError.message}`);
+    console.log(`🔄 Intentando fallback a Pionex...`);
+    const pionexData = await fetchFromPionex(symbol, timeframes);
+    return { data: pionexData, exchange: "pionex" };
   }
 
   try {
@@ -146,12 +158,12 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"]) {
     results._ticker = null;
   }
 
-  return results;
+  return { data: results, exchange: "bitget" };
 }
 
 async function fetchMarketData(timeframes = ["1h", "4h"]) {
-  const result = await fetchBestEffort("BTC", timeframes);
-  return result.data;
+  const { data } = await fetchBestEffort("BTC", timeframes);
+  return data;
 }
 
 function symbolForPair(base) {
@@ -160,8 +172,93 @@ function symbolForPair(base) {
 
 async function fetchBestEffort(base, timeframes = ["1h", "4h"]) {
   const symbol = symbolForPair(base);
-  const data = await fetchMarketDataForPair(symbol, timeframes);
-  return { data, market: "futuros", symbol };
+  const { data, exchange: sourceExchange } = await fetchMarketDataForPair(symbol, timeframes);
+  return { data, market: "futuros", symbol, exchange: sourceExchange };
+}
+
+const PIONEX_INTERVALS = {
+  "1m": "1M", "5m": "5M", "15m": "15M", "30m": "30M",
+  "1h": "60M", "2h": "120M", "4h": "4H", "8h": "8H", "12h": "12H", "1d": "1D"
+};
+
+function symbolToPionex(symbol) {
+  return symbol.replace("/", "_").replace(":USDT", "");
+}
+
+function intervalToPionex(tf) {
+  return PIONEX_INTERVALS[tf] || "60M";
+}
+
+async function fetchPionexKlines(symbol, interval, limit = 100) {
+  const pionexSymbol = symbolToPionex(symbol);
+  const pionexInterval = intervalToPionex(interval);
+  const url = `https://api.pionex.com/api/v1/market/klines?symbol=${pionexSymbol}&interval=${pionexInterval}&limit=${limit}`;
+
+  const response = await axios.get(url, { timeout: 15000 });
+
+  if (!response.data?.result || !response.data?.data?.klines) {
+    throw new Error(`Pionex klines error: ${JSON.stringify(response.data)}`);
+  }
+
+  const klines = response.data.data.klines;
+  return klines.map(k => [
+    k.time,
+    parseFloat(k.open),
+    parseFloat(k.high),
+    parseFloat(k.low),
+    parseFloat(k.close),
+    parseFloat(k.volume)
+  ]).reverse();
+}
+
+async function fetchPionexTicker(symbol) {
+  const pionexSymbol = symbolToPionex(symbol);
+  const url = `https://api.pionex.com/api/v1/market/tickers?symbol=${pionexSymbol}`;
+
+  const response = await axios.get(url, { timeout: 15000 });
+
+  if (!response.data?.result || !response.data?.data?.tickers?.length) {
+    return null;
+  }
+
+  const t = response.data.data.tickers[0];
+  const open = parseFloat(t.open);
+  const close = parseFloat(t.close);
+  const percentage = open > 0 ? ((close - open) / open) * 100 : 0;
+
+  return {
+    symbol: t.symbol,
+    last: close,
+    percentage,
+    quoteVolume: t.amount,
+    baseVolume: t.volume,
+    open,
+    high: parseFloat(t.high),
+    low: parseFloat(t.low)
+  };
+}
+
+async function fetchFromPionex(symbol, timeframes = ["1h", "4h"]) {
+  const results = {};
+  for (const tf of timeframes) {
+    try {
+      const ohlcv = await fetchPionexKlines(symbol, tf, 100);
+      console.log(`📊 Pionex ${symbol}: ${tf}=${ohlcv.length} velas`);
+      results[tf] = ohlcv;
+    } catch (e) {
+      console.log(`⚠️ Pionex klines falló ${symbol} ${tf}: ${e.message}`);
+      results[tf] = [];
+    }
+  }
+
+  try {
+    results._ticker = await fetchPionexTicker(symbol);
+  } catch (e) {
+    console.log(`⚠️ Pionex ticker falló ${symbol}: ${e.message}`);
+    results._ticker = null;
+  }
+
+  return results;
 }
 
 const AI_MODELS = [
@@ -414,7 +511,7 @@ function formatSingleIndicator(ind, tf, data) {
 async function getSingleIndicator(symbol, indicator, timeframe) {
   const timeframes = timeframe ? [timeframe] : ["1h", "4h"];
   const sym = symbolForPair(symbol);
-  const data = await fetchMarketDataForPair(sym, timeframes);
+  const { data } = await fetchMarketDataForPair(sym, timeframes);
   
   if (timeframe && timeframes.length === 1) {
     const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
@@ -432,12 +529,12 @@ async function getSingleIndicator(symbol, indicator, timeframe) {
 
 async function getAllIndicatorsForTimeframe(symbol, timeframe) {
   const sym = symbolForPair(symbol);
-  const data = await fetchMarketDataForPair(sym, [timeframe]);
+  const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, [timeframe]);
   
   const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
   const dec = decimalsForPrice(ind.precio);
   
-  return `📊 *${sym}* (Bitget Futures) - *${timeframe.toUpperCase()}*\n\n` +
+  return `📊 *${sym}* (${sourceExchange === "pionex" ? "Pionex" : "Bitget"} Futures) - *${timeframe.toUpperCase()}*\n\n` +
     `Precio: $${ind.precio.toFixed(dec)}\n` +
     `Hora: ${ind.timestamp}\n\n` +
     `• ${formatSingleIndicator("RSI", timeframe, ind)}\n` +
@@ -450,7 +547,7 @@ async function getAllIndicatorsForTimeframe(symbol, timeframe) {
 async function analyzeBotOpportunity(symbol, direction) {
   const timeframes = ["1h", "4h"];
   const sym = symbolForPair(symbol);
-  const data = await fetchMarketDataForPair(sym, timeframes);
+  const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, timeframes);
   
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
   const pairText = formatIndicatorsText(pairIndicators);
@@ -461,9 +558,9 @@ async function analyzeBotOpportunity(symbol, direction) {
 
   return openRouterChat([{
     role: "user",
-    content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${directionLabel} en ${sym} (Bitget Futures) siguiendo ESTRICTAMENTE el protocolo.
+    content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${directionLabel} en ${sym} (${sourceExchange === "pionex" ? "Pionex" : "Bitget"} Futures) siguiendo ESTRICTAMENTE el protocolo.
 
-DATOS DEL PAR ${sym} (Bitget Futures):
+DATOS DEL PAR ${sym} (${sourceExchange === "pionex" ? "Pionex" : "Bitget"} Futures):
 ${pairText}
 ${tickerText}
 PROTOCOLO DE TRADING:
@@ -494,7 +591,7 @@ ${isNeutral ? "NEUTRAL: Range donde opera el bot, SL fuera del range en ambas di
 async function compareBotVsFutures(symbol, direction) {
   const timeframes = ["1h", "4h"];
   const sym = symbolForPair(symbol);
-  const data = await fetchMarketDataForPair(sym, timeframes);
+  const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, timeframes);
 
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
   const pairText = formatIndicatorsText(pairIndicators);
@@ -505,7 +602,7 @@ async function compareBotVsFutures(symbol, direction) {
 
   return openRouterChat([{
     role: "user",
-    content: `Eres un trader profesional de criptomonedas. Analiza si es mejor usar un BOT GRID o FUTUROS para una operación ${directionLabel} en ${sym} (Bitget Futures).
+    content: `Eres un trader profesional de criptomonedas. Analiza si es mejor usar un BOT GRID o FUTUROS para una operación ${directionLabel} en ${sym} (${sourceExchange === "pionex" ? "Pionex" : "Bitget"} Futures).
 
 DATOS DEL PAR ${sym}:
 ${pairText}
@@ -737,7 +834,7 @@ bot.on("message:text", async (ctx) => {
   } catch (error) {
     console.error("❌ Error en handler message:text:", error.message);
     if (error.message && error.message.includes("does not have market")) {
-      await ctx.reply("❌ Ese par no existe en Bitget. Verifica el ticker e intenta de nuevo.");
+      await ctx.reply("❌ Ese par no está disponible en Bitget ni Pionex. Verifica el ticker e intenta de nuevo.");
     } else {
       await ctx.reply("⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo.");
     }
