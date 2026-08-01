@@ -160,8 +160,8 @@ Volume (24h): >300K USD> 300\text{K USD}
 >300K USD (Guarantees minimum liquidity to avoid slippage)
 Volume Change: <50%< 50\%
 <50% (Prevents entering anomalous, unbacked volume spikes)
-ATR (1h): >2%> 2\%
->2% (Ensures sufficient grid oscillation)
+ATR (1h): >0.40% para BTC/Majors (>2% para Altcoins)
+>0.40% BTC / >2% Altcoins (Ensures sufficient grid oscillation)
 ADX (1h): 2525
 25 to 3535
 35 (Confirms established trend strength)
@@ -180,10 +180,7 @@ Bot Short (Bearish Momentum Screener)
 
 Price Change (24h): −5% to 0%
 0% (avoids entries where price already fell significantly, i.e., an exhausted move)
-Liquidity: Same volume, volume change, and ATR filters as Bot Long (>300K USD> 300\text{K USD}
->300K USD, <50%< 50\%
-<50%, ATR 1h>2%1\text{h} > 2\%
-1h>2%).
+Liquidity: Same volume, volume change, and ATR filters as Bot Long (>300K USD, <50%, ATR 1h >0.40% para BTC/Majors / >2% para Altcoins).
 ADX (1h): 2525
 25 to 3535
 35
@@ -200,7 +197,7 @@ Bot Neutral
 Cbo 24h-3% a 3%
 Vol 24h>300K USD
 Cambio de vol. <50%
-ATR 1h>1.8%
+ATR 1h>0.30% para BTC/Majors (>1.8% para Altcoins)
 ADX 1h<18
 RSI 1h45-55
 ADX 4h<18
