@@ -38,8 +38,37 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
 const exchange = new ccxt.bitget({ options: { defaultType: 'swap' } });
 
-let botStatus = "Cerrado";
-let chatId = null;
+const STATE_FILE = path.join(__dirname, "state.json");
+
+function loadState() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+const state = loadState();
+let botStatus = state.botStatus || "Cerrado";
+let chatId = state.chatId || null;
+
+function saveState() {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ botStatus, chatId }, null, 2));
+  } catch (err) {
+    console.error("❌ Error guardando state.json:", err.message);
+  }
+}
+
+function setChatId(id) {
+  chatId = id;
+  saveState();
+}
+
+function setBotStatus(status) {
+  botStatus = status;
+  saveState();
+}
 
 const protocolo = fs.readFileSync(path.join(__dirname, "protocolo.txt"), "utf-8");
 
@@ -873,7 +902,7 @@ if (selfUrl) {
 
 bot.command("start", async (ctx) => {
   try {
-    chatId = ctx.chat.id;
+    setChatId(ctx.chat.id);
     await ctx.reply(
       "🤖 *Bot Analista Crypto Activo*\n\n" +
       "*Comandos básicos:*\n" +
@@ -901,7 +930,7 @@ bot.command("start", async (ctx) => {
 });
 
 bot.command("help", async (ctx) => {
-  chatId = ctx.chat.id;
+  setChatId(ctx.chat.id);
   await ctx.reply(
     "📖 *Guía de comandos*\n\n" +
     "*Análisis completo:*\n" +
@@ -937,7 +966,7 @@ bot.command("help", async (ctx) => {
 
 bot.on("message:text", async (ctx) => {
   try {
-    chatId = ctx.chat.id;
+    setChatId(ctx.chat.id);
     const rawText = ctx.message.text.trim();
     const text = rawText.toLowerCase();
 
@@ -994,14 +1023,14 @@ bot.on("message:text", async (ctx) => {
     }
 
     if (text === "abierto") {
-      botStatus = "Abierto";
+      setBotStatus("Abierto");
       await ctx.reply("🔒 *Modo Abierto* — Análisis automático pausado.\n\nCuando cierres tu bot, escribe *Cerrado* para reanudar.", { parse_mode: "Markdown" });
       console.log("🔒 Bot status cambiado a: Abierto");
       return;
     }
 
     if (text === "cerrado") {
-      botStatus = "Cerrado";
+      setBotStatus("Cerrado");
       await ctx.reply("🔓 *Modo Cerrado* — Análisis automático activado.\n\nCada hora analizaré BTCUSDT y te enviaré la configuración.", { parse_mode: "Markdown" });
       console.log("🔓 Bot status cambiado a: Cerrado");
       await runHourlyAnalysis();
@@ -1022,7 +1051,7 @@ bot.on("message:text", async (ctx) => {
 });
 
 bot.on("message:photo", async (ctx) => {
-  chatId = ctx.chat.id;
+  setChatId(ctx.chat.id);
   try {
     await ctx.reply("📸 Analizando captura manual...");
 
@@ -1073,7 +1102,21 @@ bot.catch((err) => {
   }
 });
 
-bot.start().catch((err) => {
-  console.error("❌ Error al iniciar el bot (posible token inválido):", err.message);
-  console.error("Verifica que TELEGRAM_BOT_TOKEN esté bien configurado en Render");
-});
+async function startBotWithRetry(attempt = 0) {
+  const MAX_RETRIES = 12;
+  try {
+    await bot.start();
+    console.log("✅ Polling de Telegram iniciado correctamente");
+  } catch (err) {
+    const isConflict = err.message && err.message.includes("409");
+    if (isConflict && attempt < MAX_RETRIES) {
+      console.warn(`⚠️ 409 Conflict (instancia previa aún activa). Reintento ${attempt + 1}/${MAX_RETRIES} en 5s...`);
+      setTimeout(() => startBotWithRetry(attempt + 1), 5000);
+    } else {
+      console.error("❌ Error al iniciar el bot (posible token inválido):", err.message);
+      console.error("Verifica que TELEGRAM_BOT_TOKEN esté bien configurado en Render");
+    }
+  }
+}
+
+startBotWithRetry();
