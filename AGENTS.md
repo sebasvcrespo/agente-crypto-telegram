@@ -115,6 +115,7 @@ node index.js > log.txt 2>&1 &
 | `MARKET_INVALID_SYMBOL` en Pionex | Símbolo sin `_PERP` | Verificar `symbolToPionex()` use `_PERP` |
 | Rate limit en Bitget | Demasiadas requests | Ya manejado con retry + delay en `fetchMarketDataForPair` |
 | "Par no disponible" | Par no existe en ninguna fuente | Verificar si el par existe en Bitget o Pionex |
+| `409 Conflict` en `getUpdates` al iniciar | Instancia anterior del bot aún con polling activo (tras redeploy) | Ya manejado: `startBotWithRetry()` reintenta cada 5s (hasta 12 veces) |
 
 ## Notas importantes
 
@@ -123,4 +124,5 @@ node index.js > log.txt 2>&1 &
 - **Pionex PERP:** Siempre usar `_PERP` suffix, nunca `_USDT` para perpetuos
 - **Bitget swap:** ccxt ya usa perpetuos por defecto con `defaultType: 'swap'`
 - **Fallback:** Cuando Pionex falla, el bot intenta Bitget automáticamente (en modo auto)
+- **Persistencia de estado:** `chatId` y `botStatus` se guardan en `state.json` (no versionado, ver `.gitignore`) via `setChatId()`/`setBotStatus()`. Sobreviven a restarts/deploys para que el análisis horario no se salte por `chatId=null`
 - **Protocolo de trading:** Ver `protocolo.txt` para la lógica completa de análisis
