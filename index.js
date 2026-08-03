@@ -72,7 +72,8 @@ function setBotStatus(status) {
 
 const protocolo = fs.readFileSync(path.join(__dirname, "protocolo.txt"), "utf-8");
 
-function decimalsForPrice(price) {
+function decimalsForPrice(price, isBtcBase = false) {
+  if (isBtcBase) return 8;
   if (price < 0.001) return 8;
   if (price < 0.01) return 6;
   if (price < 0.1) return 5;
@@ -81,11 +82,14 @@ function decimalsForPrice(price) {
   return 2;
 }
 
-function formatIndicatorsText(data) {
+function formatIndicatorsText(data, isBtcBase = false) {
   const bb = data.bb_4h;
-  const dec = decimalsForPrice(data.precio);
+  const dec = decimalsForPrice(data.precio, isBtcBase);
+  const currencySymbol = isBtcBase ? "" : "$";
+  const currencyUnit = isBtcBase ? " BTC" : "";
+
   const bbLine = bb
-    ? `BB 4H > Upper: ${bb.upper.toFixed(dec)} | Mid: ${bb.middle.toFixed(dec)} | Lower: ${bb.lower.toFixed(dec)}`
+    ? `BB 4H > Upper: ${bb.upper.toFixed(dec)}${currencyUnit} | Mid: ${bb.middle.toFixed(dec)}${currencyUnit} | Lower: ${bb.lower.toFixed(dec)}${currencyUnit}`
     : "BB 4H: N/A";
 
   const r1 = data.rsi["1h"]?.toFixed(1) ?? "N/A";
@@ -96,13 +100,13 @@ function formatIndicatorsText(data) {
   const adx1 = a1 ? `ADX ${a1.adx} | DI+ ${a1.diPlus} | DI- ${a1.diMinus}` : "N/A";
   const adx4 = a4 ? `ADX ${a4.adx} | DI+ ${a4.diPlus} | DI- ${a4.diMinus}` : "N/A";
 
-  const at1 = data.atr["1h"] ? `${data.atr["1h"].toFixed(dec)} (${data.atr["1h_pct"]})` : "N/A";
-  const at4 = data.atr["4h"] ? `${data.atr["4h"].toFixed(dec)} (${data.atr["4h_pct"]})` : "N/A";
+  const at1 = data.atr["1h"] ? `${data.atr["1h"].toFixed(dec)}${currencyUnit} (${data.atr["1h_pct"]})` : "N/A";
+  const at4 = data.atr["4h"] ? `${data.atr["4h"].toFixed(dec)}${currencyUnit} (${data.atr["4h_pct"]})` : "N/A";
 
   const sbr = data.sellBuyRate !== null ? data.sellBuyRate.toFixed(2) : "N/A";
 
   const output = `
-PRECIO ACTUAL: $${data.precio.toFixed(dec)} (1H) | $${data.precio4h.toFixed(dec)} (4H)
+PRECIO ACTUAL: ${currencySymbol}${data.precio.toFixed(dec)}${currencyUnit} (1H) | ${currencySymbol}${data.precio4h.toFixed(dec)}${currencyUnit} (4H)
 HORA (UTC): ${data.timestamp}
 
 --- INDICADORES 1H ---
@@ -123,7 +127,7 @@ ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : 
   return output;
 }
 
-function formatTickerText(ticker, label = "DATOS 24H") {
+function formatTickerText(ticker, label = "DATOS 24H", isBtcBase = false) {
   if (!ticker) {
     return `--- ${label} ---\n• Price Change: N/A\n• Volume (24h): N/A\n• Volume Change: N/A\n`;
   }
@@ -132,8 +136,11 @@ function formatTickerText(ticker, label = "DATOS 24H") {
     ? `${ticker.percentage > 0 ? "+" : ""}${ticker.percentage.toFixed(2)}%`
     : "N/A";
 
+  const currencySymbol = isBtcBase ? "" : "$";
+  const currencyUnit = isBtcBase ? " BTC" : "";
+
   const vol = ticker.quoteVolume !== undefined
-    ? `$${Number(ticker.quoteVolume).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+    ? `${currencySymbol}${Number(ticker.quoteVolume).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}${currencyUnit}`
     : "N/A";
 
   const vc = "N/A";
@@ -146,6 +153,10 @@ async function sleep(ms) {
 }
 
 async function fetchMarketDataForPair(symbol, timeframes = ["1h", "4h"], source = "auto") {
+  if (symbol.endsWith(":BTC") && source === "auto") {
+    source = "pionex";
+  }
+
   // Si source es "pionex" → solo Pionex
   if (source === "pionex") {
     const data = await fetchFromPionex(symbol, timeframes);
@@ -239,6 +250,10 @@ async function fetchMarketData(timeframes = ["1h", "4h"]) {
 }
 
 function symbolForPair(base) {
+  if (base.endsWith("/BTC") || base.endsWith("BTC")) {
+    const cleanBase = base.replace(/\/BTC$/, "").replace(/BTC$/, "");
+    return `${cleanBase}/BTC:BTC`;
+  }
   return `${base}/USDT:USDT`;
 }
 
@@ -254,7 +269,7 @@ const PIONEX_INTERVALS = {
 };
 
 function symbolToPionex(symbol) {
-  return symbol.replace("/", "_").replace(":USDT", "_PERP");
+  return symbol.replace("/", "_").replace(/:(USDT|BTC)$/, "_PERP");
 }
 
 function intervalToPionex(tf) {
@@ -435,14 +450,50 @@ async function analyzePair(base, timeframes = ["1h", "4h"]) {
     fetchBestEffort(base, timeframes)
   ]);
 
+  const isBtcBase = pairResult.symbol.endsWith(":BTC");
   const btcIndicators = getLatestIndicators(btcResult.data["1h"], btcResult.data["4h"]);
   const pairIndicators = getLatestIndicators(pairResult.data["1h"], pairResult.data["4h"]);
-  const btcText = formatIndicatorsText(btcIndicators);
-  const pairText = formatIndicatorsText(pairIndicators);
-  const btcTickerText = formatTickerText(btcResult.data._ticker, "DATOS 24H BTC");
-  const pairTickerText = formatTickerText(pairResult.data._ticker, "DATOS 24H " + pairResult.symbol);
+  const btcText = formatIndicatorsText(btcIndicators, false);
+  const pairText = formatIndicatorsText(pairIndicators, isBtcBase);
+  const btcTickerText = formatTickerText(btcResult.data._ticker, "DATOS 24H BTC", false);
+  const pairTickerText = formatTickerText(pairResult.data._ticker, "DATOS 24H " + pairResult.symbol, isBtcBase);
 
-  const content = `Eres un trader profesional de criptomonedas.
+  let content = "";
+  if (isBtcBase) {
+    content = `Eres un trader profesional de criptomonedas.
+
+--- CONTEXTO BTC (solo informativo, sin recomendación) ---
+${btcText}
+${btcTickerText}
+--- ANÁLISIS DEL PAR ${pairResult.symbol} (${pairResult.market}) ---
+${pairText}
+${pairTickerText}
+PROTOCOLO DE TRADING:
+${protocolo}
+
+INSTRUCCIONES:
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Primero da un breve panorama de BTC (2-3 líneas, solo contexto, sin recomendación de trade)
+3. Luego analiza ${pairResult.symbol} siguiendo ESTRICTAMENTE el protocolo (punto 12 del checklist)
+4. Determina: BOT LONG, BOT SHORT, BOT NEUTRAL o NO TRADE. Dado que este par se cotiza en BTC, la recomendación debe ser exclusivamente para un BOT GRID (no dejes abierta una opción de futuros convencionales).
+5. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+6. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción (máximo 4x según protocolo)
+7. Si es NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
+8. NO muestres capital ni cálculos intermedios
+
+RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del par:
+
+✅ BOT LONG / ✅ BOT SHORT / ✅ BOT NEUTRAL
+• Entry: XX.XXX BTC
+• SL: XX.XXX BTC
+• TP: XX.XXX BTC
+• Range: XX.XXX - XX.XXX BTC
+• Grids: XX
+• Leverage: Xx
+
+LONG: SL inferior, TP superior. SHORT: SL superior, TP inferior. NEUTRAL: Range donde opera, SL fuera del range en ambas direcciones.`;
+  } else {
+    content = `Eres un trader profesional de criptomonedas.
 
 --- CONTEXTO BTC (solo informativo, sin recomendación) ---
 ${btcText}
@@ -474,6 +525,7 @@ RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del p
 • Leverage: Xx
 
 LONG: SL inferior, TP superior. SHORT: SL superior, TP inferior. NEUTRAL: Range donde opera, SL fuera del range en ambas direcciones.`;
+  }
 
   return openRouterChat([{ role: "user", content }]);
 }
@@ -509,7 +561,16 @@ function parseFlexibleCommand(text) {
   
   if (upperParts.length === 0) return null;
   
-  const symbol = upperParts[0].replace(/USDT\s*$/, "").trim();
+  const firstPart = upperParts[0];
+  const btcMatch = firstPart.match(/^([A-Z0-9]+)[/_]?(BTC)$/);
+  
+  let symbol = "";
+  if (btcMatch && btcMatch[1] !== "BTC") {
+    symbol = `${btcMatch[1]}/BTC`;
+  } else {
+    symbol = firstPart.replace(/USDT\s*$/, "").trim();
+  }
+  
   if (!symbol) return null;
 
   // Detectar fuente (BITGET o PIONEX)
@@ -566,8 +627,9 @@ function parseFlexibleCommand(text) {
   };
 }
 
-function formatSingleIndicator(ind, tf, data) {
-  const dec = decimalsForPrice(data.precio);
+function formatSingleIndicator(ind, tf, data, isBtcBase = false) {
+  const dec = decimalsForPrice(data.precio, isBtcBase);
+  const currencyUnit = isBtcBase ? " BTC" : "";
   
   if (ind === "ADX") {
     const adx = data.adx;
@@ -585,13 +647,13 @@ function formatSingleIndicator(ind, tf, data) {
     const atr = data.atr ?? data.atr?.[tf] ?? data.atr?.["1h"];
     const pct = data.atrPct ?? data.atr?.[`${tf}_pct`] ?? data.atr?.["1h_pct"];
     if (!atr) return `ATR ${tf}: N/A`;
-    return `ATR(14) ${tf}: ${atr.toFixed(dec)} (${pct})`;
+    return `ATR(14) ${tf}: ${atr.toFixed(dec)}${currencyUnit} (${pct})`;
   }
   
   if (ind === "BB" || ind === "BOLINGER") {
     const bb = data.bb ?? data.bb_4h;
     if (!bb) return `BB ${tf}: N/A`;
-    return `BB(20,2) ${tf} | Upper: ${bb.upper.toFixed(dec)} | Mid: ${bb.middle.toFixed(dec)} | Lower: ${bb.lower.toFixed(dec)}`;
+    return `BB(20,2) ${tf} | Upper: ${bb.upper.toFixed(dec)}${currencyUnit} | Mid: ${bb.middle.toFixed(dec)}${currencyUnit} | Lower: ${bb.lower.toFixed(dec)}${currencyUnit}`;
   }
   
   if (ind === "SBR" || ind === "SELLBUYRATE") {
@@ -607,17 +669,18 @@ async function getSingleIndicator(symbol, indicator, timeframe) {
   const timeframes = timeframe ? [timeframe] : ["1h", "4h"];
   const sym = symbolForPair(symbol);
   const { data } = await fetchMarketDataForPair(sym, timeframes);
+  const isBtcBase = sym.endsWith(":BTC");
   
   if (timeframe && timeframes.length === 1) {
     const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
-    return formatSingleIndicator(indicator, timeframe, ind);
+    return formatSingleIndicator(indicator, timeframe, ind, isBtcBase);
   }
   
   const ind = getLatestIndicators(data["1h"], data["4h"]);
   const results = [];
   for (const tf of timeframes) {
     const tfData = getIndicatorsForTimeframe(data[tf], tf);
-    results.push(formatSingleIndicator(indicator, tf, tfData));
+    results.push(formatSingleIndicator(indicator, tf, tfData, isBtcBase));
   }
   return results.join("\n");
 }
@@ -625,18 +688,21 @@ async function getSingleIndicator(symbol, indicator, timeframe) {
 async function getAllIndicatorsForTimeframe(symbol, timeframe) {
   const sym = symbolForPair(symbol);
   const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, [timeframe]);
+  const isBtcBase = sym.endsWith(":BTC");
   
   const ind = getIndicatorsForTimeframe(data[timeframe], timeframe);
-  const dec = decimalsForPrice(ind.precio);
+  const dec = decimalsForPrice(ind.precio, isBtcBase);
+  const currencySymbol = isBtcBase ? "" : "$";
+  const currencyUnit = isBtcBase ? " BTC" : "";
   
   return `📊 *${sym}* (${sourceExchange === "pionex" ? "Pionex" : "Bitget"} Futures) - *${timeframe.toUpperCase()}*\n\n` +
-    `Precio: $${ind.precio.toFixed(dec)}\n` +
+    `Precio: ${currencySymbol}${ind.precio.toFixed(dec)}${currencyUnit}\n` +
     `Hora: ${ind.timestamp}\n\n` +
-    `• ${formatSingleIndicator("RSI", timeframe, ind)}\n` +
-    `• ${formatSingleIndicator("ADX", timeframe, ind)}\n` +
-    `• ${formatSingleIndicator("ATR", timeframe, ind)}\n` +
-    `• ${formatSingleIndicator("BB", timeframe, ind)}\n` +
-    `• ${formatSingleIndicator("SBR", timeframe, ind)}`;
+    `• ${formatSingleIndicator("RSI", timeframe, ind, isBtcBase)}\n` +
+    `• ${formatSingleIndicator("ADX", timeframe, ind, isBtcBase)}\n` +
+    `• ${formatSingleIndicator("ATR", timeframe, ind, isBtcBase)}\n` +
+    `• ${formatSingleIndicator("BB", timeframe, ind, isBtcBase)}\n` +
+    `• ${formatSingleIndicator("SBR", timeframe, ind, isBtcBase)}`;
 }
 
 async function analyzeBotOpportunity(symbol, direction) {
@@ -644,12 +710,15 @@ async function analyzeBotOpportunity(symbol, direction) {
   const sym = symbolForPair(symbol);
   const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, timeframes);
   
+  const isBtcBase = sym.endsWith(":BTC");
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
-  const pairText = formatIndicatorsText(pairIndicators);
-  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
+  const pairText = formatIndicatorsText(pairIndicators, isBtcBase);
+  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym, isBtcBase);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
+  const currencySymbol = isBtcBase ? "" : "$";
+  const currencyUnit = isBtcBase ? " BTC" : "";
 
   return openRouterChat([{
     role: "user",
@@ -666,16 +735,16 @@ INSTRUCCIONES:
 2. Aplica el checklist del punto 12 del protocolo
 3. Determina: ✅ BOT ${directionLabel} o ❌ NO TRADE
 4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
-5. Si es ${directionLabel}: calcula SL, rango, grids, leverage
+5. Si es ${directionLabel}: calcula SL, rango, grids, leverage (máximo 4x según protocolo)
 ${isNeutral ? "6. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones" : ""}
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
 ✅ BOT ${directionLabel}
-• Entry: $XX.XXX
-• SL: $XX.XXX
-• TP: $XX.XXX
-• Range: $XX.XXX - $XX.XXX
+• Entry: ${currencySymbol}XX.XXX${currencyUnit}
+• SL: ${currencySymbol}XX.XXX${currencyUnit}
+• TP: ${currencySymbol}XX.XXX${currencyUnit}
+• Range: ${currencySymbol}XX.XXX - ${currencySymbol}XX.XXX${currencyUnit}
 • Grids: XX
 • Leverage: Xx
 
@@ -743,13 +812,47 @@ async function analyzePairWithSource(base, source, direction) {
   const sym = symbolForPair(base);
   const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, timeframes, source);
 
+  const isBtcBase = sym.endsWith(":BTC");
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"]);
-  const pairText = formatIndicatorsText(pairIndicators);
-  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
+  const pairText = formatIndicatorsText(pairIndicators, isBtcBase);
+  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym, isBtcBase);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
   const sourceLabel = sourceExchange === "pionex" ? "Pionex" : "Bitget";
+
+  if (isBtcBase) {
+    return openRouterChat([{
+      role: "user",
+      content: `Eres un trader profesional. Analiza si es buena oportunidad para BOT ${directionLabel} en ${sym} (${sourceLabel}) siguiendo ESTRICTAMENTE el protocolo.
+
+DATOS DEL PAR ${sym} (${sourceLabel}):
+${pairText}
+${tickerText}
+PROTOCOLO DE TRADING:
+${protocolo}
+
+INSTRUCCIONES:
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles.
+2. Aplica el checklist del punto 12 del protocolo
+3. Determina: ✅ BOT ${directionLabel} o ❌ NO TRADE
+4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
+5. Si es ${directionLabel}: calcula SL, rango, grids, leverage (máximo 4x según protocolo)
+${isNeutral ? "6. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones" : ""}
+
+RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
+
+✅ BOT ${directionLabel}
+• Entry: XX.XXX BTC
+• SL: XX.XXX BTC
+• TP: XX.XXX BTC
+• Range: XX.XXX - XX.XXX BTC
+• Grids: XX
+• Leverage: Xx
+
+${isNeutral ? "NEUTRAL: Range donde opera el bot, SL fuera del range en ambas direcciones." : `SL/TP según protocolo: ${directionLabel === "LONG" ? "SL es límite inferior, TP límite superior" : "SL es límite superior, TP límite inferior"}.`}`
+    }]);
+  }
 
   if (isNeutral) {
     return openRouterChat([{
@@ -977,9 +1080,12 @@ bot.on("message:text", async (ctx) => {
         return;
       }
 
+      const isBtcBase = cmd.symbol.endsWith("/BTC");
+      const symbolLabel = isBtcBase ? cmd.symbol : `${cmd.symbol}USDT`;
+
       // Comparación bot vs futuros (sin fuente)
       if (cmd.comparisonMode && !cmd.source) {
-        await ctx.reply(`🔄 Comparando BOT vs FUTUROS para ${cmd.symbol}USDT en ${cmd.botIntent}...`);
+        await ctx.reply(`🔄 Comparando BOT vs FUTUROS para ${symbolLabel} en ${cmd.botIntent}...`);
         const analysis = await compareBotVsFutures(cmd.symbol, cmd.botIntent);
         await ctx.reply(analysis);
         return;
@@ -988,7 +1094,7 @@ bot.on("message:text", async (ctx) => {
       // Con fuente seleccionada: analiza Bot+Futuros (o solo Neutral)
       if (cmd.source && cmd.botIntent) {
         const sourceLabel = cmd.source === "pionex" ? "Pionex" : "Bitget";
-        await ctx.reply(`🔍 Analizando ${cmd.symbol}USDT con datos de ${sourceLabel} (${cmd.botIntent})...`);
+        await ctx.reply(`🔍 Analizando ${symbolLabel} con datos de ${sourceLabel} (${cmd.botIntent})...`);
         const analysis = await analyzePairWithSource(cmd.symbol, cmd.source, cmd.botIntent);
         await ctx.reply(analysis);
         return;
@@ -996,27 +1102,27 @@ bot.on("message:text", async (ctx) => {
 
       // Bot/Futuros sin fuente (comportamiento actual)
       if (cmd.botIntent) {
-        await ctx.reply(`🔍 Analizando oportunidad ${cmd.botIntent} para ${cmd.symbol}USDT...`);
+        await ctx.reply(`🔍 Analizando oportunidad ${cmd.botIntent} para ${symbolLabel}...`);
         const analysis = await analyzeBotOpportunity(cmd.symbol, cmd.botIntent);
         await ctx.reply(analysis);
         return;
       }
 
       if (cmd.indicator) {
-        await ctx.reply(`🔍 Consultando ${cmd.indicator} ${cmd.timeframe || "1h+4h"} para ${cmd.symbol}USDT...`);
+        await ctx.reply(`🔍 Consultando ${cmd.indicator} ${cmd.timeframe || "1h+4h"} para ${symbolLabel}...`);
         const result = await getSingleIndicator(cmd.symbol, cmd.indicator, cmd.timeframe);
         await ctx.reply(result);
         return;
       }
 
       if (cmd.allIndicators) {
-        await ctx.reply(`🔍 Obteniendo todos los indicadores en ${cmd.timeframe} para ${cmd.symbol}USDT...`);
+        await ctx.reply(`🔍 Obteniendo todos los indicadores en ${cmd.timeframe} para ${symbolLabel}...`);
         const result = await getAllIndicatorsForTimeframe(cmd.symbol, cmd.timeframe);
         await ctx.reply(result);
         return;
       }
 
-      await ctx.reply(`🔍 Analizando ${cmd.symbol}USDT con contexto de BTC...\n\nEsto puede tomar hasta 30 segundos.`);
+      await ctx.reply(`🔍 Analizando ${symbolLabel} con contexto de BTC...\n\nEsto puede tomar hasta 30 segundos.`);
       const analysis = await analyzePair(cmd.symbol, ["1h", "4h"]);
       await ctx.reply(analysis);
       return;

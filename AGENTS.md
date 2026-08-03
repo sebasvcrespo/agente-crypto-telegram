@@ -30,19 +30,21 @@ OPENROUTER_API_KEY=...
 
 ### Pionex (perpetuos)
 - API REST pública, no requiere API key
-- **CRÍTICO:** El sufijo para perpetuos es `_PERP`, no `_USDT`
-- Símbolo correcto: `EVAA_USDT_PERP` (NO `EVAA_USDT` que es spot)
-- 601 pares perpetuos disponibles
-- Función de conversión: `symbolToPionex()` en `index.js:227`
-- Klines endpoint: `GET /api/v1/market/klines?symbol=XXX_USDT_PERP&interval=60M&limit=100`
-- Tickers endpoint: `GET /api/v1/market/tickers?symbol=XXX_USDT_PERP`
+- **CRÍTICO:** El sufijo para perpetuos es `_PERP`, tanto para base USDT como BTC
+- Símbolo correcto USDT: `EVAA_USDT_PERP` (NO `EVAA_USDT` que es spot)
+- Símbolo correcto BTC: `ETH_BTC_PERP`, `ADA_BTC_PERP`, etc.
+- Pares en base BTC soportados: `ADA/BTC`, `ORDI/BTC`, `PAXG/BTC`, `LINK/BTC`, `XRP/BTC`, `SOL/BTC`, `ETH/BTC`, `BNB/BTC`, `DOGE/BTC`, `SUI/BTC` (y cualquier par cruzado contra BTC).
+- 601+ pares perpetuos disponibles
+- Función de conversión: `symbolToPionex()` en `index.js` (reemplaza `/` → `_`, `:USDT` o `:BTC` → `_PERP`)
+- Klines endpoint: `GET /api/v1/market/klines?symbol=XXX_PERP&interval=60M&limit=100`
+- Tickers endpoint: `GET /api/v1/market/tickers?symbol=XXX_PERP`
 
 ### Formato de conversión de símbolo
 
 ```
-Input:  "EVAA/USDT:USDT"
-Pionex: "EVAA_USDT_PERP"  (replace "/" → "_", replace ":USDT" → "_PERP")
-Bitget: "EVAA/USDT:USDT"  (formato ccxt estándar)
+Input USDT: "EVAA/USDT:USDT" -> Pionex: "EVAA_USDT_PERP"
+Input BTC:  "ADA/BTC:BTC"    -> Pionex: "ADA_BTC_PERP"
+Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 ```
 
 ## Sistema de comandos
