@@ -252,7 +252,9 @@ async function fetchMarketData(timeframes = ["1h", "4h"]) {
 function symbolForPair(base) {
   if (base.endsWith("/BTC") || base.endsWith("BTC")) {
     const cleanBase = base.replace(/\/BTC$/, "").replace(/BTC$/, "");
-    return `${cleanBase}/BTC:BTC`;
+    if (cleanBase && cleanBase !== "BTC") {
+      return `${cleanBase}/BTC:BTC`;
+    }
   }
   return `${base}/USDT:USDT`;
 }
