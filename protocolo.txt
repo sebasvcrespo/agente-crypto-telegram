@@ -156,8 +156,8 @@ Bot Long (Bullish Momentum Screener)
 
 Price Change (24h): 0% to 5%
 5% (ensures early-stage momentum, avoids entries where the move already covered significant ground)
-Volume (24h): >300K USD> 300\text{K USD}
->300K USD (Guarantees minimum liquidity to avoid slippage)
+Volume (24h): >200K USD
+>200K USD (Guarantees minimum liquidity to avoid slippage)
 Volume Change: <50%< 50\%
 <50% (Prevents entering anomalous, unbacked volume spikes)
 ATR (1h): >0.40% para BTC/Majors (>1.2% para Altcoins)

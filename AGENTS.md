@@ -79,6 +79,7 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - Genera tabla con RSI, ADX, ATR, Bollinger Bands
 - Se envía a un canal de Telegram (chat ID configurado)
 - **Filtro ATR del Screener (Sección 13 de `protocolo.txt`):** para BTC/Majors el ATR(1h) requerido es **>0.40%** (Long/Short) y **>0.30%** (Neutral); las altcoins mantienen **>1.2%** / **>1.8%**
+- **Filtro de Volumen (24h) del Screener (Sección 13):** **>200K USD** en las tres direcciones (Long, Short y Neutral)
 
 ## Indicadores técnicos (`indicators.js`)
 
