@@ -78,7 +78,7 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - Usa Pionex como fuente primaria
 - Genera tabla con RSI, ADX, ATR, Bollinger Bands
 - Se envía a un canal de Telegram (chat ID configurado)
-- **Filtro ATR del Screener (Sección 13 de `protocolo.txt`):** para BTC/Majors el ATR(1h) requerido es **>0.40%** (Long/Short) y **>0.30%** (Neutral); las altcoins mantienen **>2%** / **>1.8%**
+- **Filtro ATR del Screener (Sección 13 de `protocolo.txt`):** para BTC/Majors el ATR(1h) requerido es **>0.40%** (Long/Short) y **>0.30%** (Neutral); las altcoins mantienen **>1.2%** / **>1.8%**
 
 ## Indicadores técnicos (`indicators.js`)
 

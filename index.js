@@ -410,7 +410,7 @@ PROTOCOLO DE TRADING:
 ${protocolo}
 
 INSTRUCCIONES:
-1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles. Para BTCUSDT, el umbral de ATR(1h) en el Screener es >0.40% (no >2% como en altcoins).
+1. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13) y evalúa la entrada con todos los demás parámetros disponibles. Para BTCUSDT, el umbral de ATR(1h) en el Screener es >0.40% (no >1.2% como en altcoins).
 2. Sigue el checklist del punto 12 del protocolo
 3. Determina: BOT LONG, BOT SHORT, BOT NEUTRAL o NO TRADE
 4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
