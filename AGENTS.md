@@ -94,6 +94,14 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - Si el SL implica pérdida **>8–10% a 1x**, reducir capital (Sección 4) y/o bajar leverage (Sección 5) hasta dejar pérdida real proyectada en **5–8%**.
 - Los prompts de análisis incluyen un bullet `EXTRA:` con esta directiva (8 bloques de instrucciones en `index.js`).
 
+## Máximo leverage por par (Pionex / Bitget)
+
+- El bot obtiene el **max leverage disponible** de cada par y se lo manda a la IA como bloque `--- MAX LEVERAGE (Pionex/Bitget) ---` en todos los flujos.
+- **Pionex:** `GET /api/v1/common/riskTable?symbol=XXX_PERP` (público, sin API key) → devuelve escalones por nocional con `maxLeverage`. Ej `DOS_USDT_PERP`: **25x** (≤10K USDT) → 20x → 10x → 5x → 2x. `fetchPionexRiskTable()` extrae `{ max, tiers, source: "pionex" }`.
+- **Bitget:** ccxt → `exchange.markets[symbol].limits.leverage.max` tras `exchange.loadMarkets()`. Ej `DOS/USDT:USDT` = **10x**. `{ max, source: "bitget" }`.
+- `formatLeverageText(leverage)` formatea el máximo + 4 escalones por nocional (`25x hasta 10,000 USDT | ...`). Si falla → `N/A`.
+- **Regla en prompts y Sección 5 de `protocolo.txt`:** el leverage final (máx 4x por protocolo) **debe ser ≤ al max leverage del par**; si el máximo del par es bajo, dimensionar range/SL/exposición más conservador y señalar si no alcanza para la convicción deseada.
+
 ## Indicadores técnicos (`indicators.js`)
 
 | Indicador | Función | Default |

@@ -62,6 +62,8 @@ Conviction LevelLeverageCriteria SummaryLow / ConflictingNo trade (or 1x if forc
 ⚠️ Critical rule for Very High: ALL criteria must be met, not most. Rare classification (a few times per month).
 Leverage finalization rule: if the conviction tier suggests a leverage (e.g., 3x) but the calculated SL is wide (e.g., >15-18% at 1x), cross-check the resulting tail risk: loss % × leverage on the assigned capital. If this produces a disproportionate loss relative to the position size already reduced in point 4, lower the leverage one tier as the final number. Only the final, reconciled leverage is shown in the output table.
 
+The final leverage must also be ≤ the pair's maximum available leverage on the chosen exchange (Pionex/Bitget), shown in the data as MAX LEVERAGE (with notional tiers). If the pair's maximum is lower than the conviction tier, cap the leverage at the pair's max and treat the setup as higher-risk (tighter range/SL or lower exposure).
+
 
 
 
