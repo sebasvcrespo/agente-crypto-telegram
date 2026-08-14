@@ -172,11 +172,15 @@ ADX (1h): 2525
 RSI (1h): 5252
 52 to 6464
 64 (Centered range to avoid overbought exhaustion)
+RSI (4h): >= 50
+>= 50 (Alineación de tendencia 4H: la tendencia mayor debe estar a favor del LONG)
 ADX (4h): 1515
 15 to 2525
 25 (Adjusted from 18-28 — favors younger 4H trends not yet mature/extended toward resistance)
+Funding Rate: <= 0.05%
+<= 0.05% (Evita longs hacinados: funding positivamente elevado = mercado sobreextendido a la compra)
 
-Nota: Si Price Change 24h, Volume (24h) o Volume Change no están disponibles (N/A) para un par, esos filtros específicos se omiten y se procede con el análisis usando todos los demás parámetros disponibles.
+Nota: Si Price Change 24h, Volume (24h), Volume Change o Funding Rate no están disponibles (N/A) para un par, esos filtros específicos se omiten y se procede con el análisis usando todos los demás parámetros disponibles.
 
 
 Bot Short (Bearish Momentum Screener)
@@ -191,11 +195,15 @@ ADX (1h): 2525
 RSI (1h): 3333
 33 to 4545
 45 (More extreme/aggressive range to catch heavy distribution)
+RSI (4h): <= 50
+<= 50 (Alineación de tendencia 4H: la tendencia mayor debe estar a favor del SHORT)
 ADX (4h): 1515
 15 to 2525
 25 (Adjusted from 18-28 — favors younger, not-yet-extended 4H downtrends)
+Funding Rate: >= -0.05%
+>= -0.05% (Evita shorts hacinados: funding negativamente elevado = mercado sobreextendido a la venta)
 
-Nota: Si Price Change 24h, Volume (24h) o Volume Change no están disponibles (N/A) para un par, esos filtros específicos se omiten y se procede con el análisis usando todos los demás parámetros disponibles.
+Nota: Si Price Change 24h, Volume (24h), Volume Change o Funding Rate no están disponibles (N/A) para un par, esos filtros específicos se omiten y se procede con el análisis usando todos los demás parámetros disponibles.
 
 Bot Neutral
 Cbo 24h-3% a 3%

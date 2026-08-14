@@ -178,6 +178,94 @@ function formatLeverageText(leverage) {
   return `--- MAX LEVERAGE (${src}) ---\nMáximo disponible: ${leverage.max}x${tierLine}`;
 }
 
+function formatFundingText(funding) {
+  if (funding === null || funding === undefined || isNaN(funding)) {
+    return `--- FUNDING RATE ---\nN/A`;
+  }
+  return `--- FUNDING RATE ---\n${funding > 0 ? "+" : ""}${funding.toFixed(4)}%`;
+}
+
+const MAJOR_COINS = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "LINK", "AVAX", "TON", "TRX", "LTC", "DOT", "BCH"];
+
+function evaluateScreener(pairIndicators, ticker, direction, isMajor = false) {
+  const dir = (direction || "").toUpperCase();
+  if (!["LONG", "SHORT", "NEUTRAL"].includes(dir)) return null;
+
+  const problems = [];
+  const add = (msg) => problems.push(msg);
+
+  const rsi1 = pairIndicators.rsi?.["1h"];
+  const rsi4 = pairIndicators.rsi?.["4h"];
+  const adx1 = pairIndicators.adx?.["1h"]?.adx;
+  const adx4 = pairIndicators.adx?.["4h"]?.adx;
+  const atr1 = pairIndicators.atr?.["1h_pct"] != null ? parseFloat(pairIndicators.atr["1h_pct"]) : null;
+  const volUsd = ticker?.quoteVolume != null ? Number(ticker.quoteVolume) : null;
+  const change = ticker?.percentage != null ? Number(ticker.percentage) : null;
+
+  if (volUsd != null && !isNaN(volUsd) && volUsd <= 200000) {
+    add(`Volumen 24h ${Math.round(volUsd).toLocaleString("en-US")} USDT ≤ 200K`);
+  }
+
+  if (dir === "NEUTRAL") {
+    if (adx1 != null && adx1 >= 18) add(`ADX(1h) ${adx1} ≥ 18 (no lateral)`);
+    if (adx4 != null && adx4 >= 18) add(`ADX(4h) ${adx4} ≥ 18 (no lateral)`);
+    if (rsi1 != null && (rsi1 < 45 || rsi1 > 55)) add(`RSI(1h) ${rsi1.toFixed(1)} fuera de 45-55`);
+    if (change != null && (change < -3 || change > 3)) add(`Cambio 24h ${change.toFixed(2)}% fuera de -3% a 3%`);
+    const atrMin = isMajor ? 0.30 : 1.8;
+    if (atr1 != null && atr1 < atrMin) add(`ATR(1h) ${atr1.toFixed(2)}% < ${atrMin.toFixed(2)}% (Neutral)`);
+    return problems.length ? problems : null;
+  }
+
+  if (rsi1 != null) {
+    if (dir === "LONG" && (rsi1 < 52 || rsi1 > 64)) add(`RSI(1h) ${rsi1.toFixed(1)} fuera de 52-64`);
+    if (dir === "SHORT" && (rsi1 < 33 || rsi1 > 45)) add(`RSI(1h) ${rsi1.toFixed(1)} fuera de 33-45`);
+  }
+  if (rsi4 != null) {
+    if (dir === "LONG" && rsi4 < 50) add(`RSI(4h) ${rsi4.toFixed(1)} < 50 (tendencia 4H bajista)`);
+    if (dir === "SHORT" && rsi4 > 50) add(`RSI(4h) ${rsi4.toFixed(1)} > 50 (tendencia 4H alcista)`);
+  }
+  if (adx1 != null && (adx1 < 25 || adx1 > 35)) add(`ADX(1h) ${adx1} fuera de 25-35`);
+  if (adx4 != null && (adx4 < 15 || adx4 > 25)) add(`ADX(4h) ${adx4} fuera de 15-25`);
+  if (change != null) {
+    if (dir === "LONG" && (change < 0 || change > 5)) add(`Cambio 24h ${change.toFixed(2)}% fuera de 0-5%`);
+    if (dir === "SHORT" && (change < -5 || change > 0)) add(`Cambio 24h ${change.toFixed(2)}% fuera de -5% a 0%`);
+  }
+  const atrMin = isMajor ? 0.40 : 1.2;
+  if (atr1 != null && atr1 < atrMin) add(`ATR(1h) ${atr1.toFixed(2)}% < ${atrMin.toFixed(2)}%`);
+
+  return problems.length ? problems : null;
+}
+
+function validateAnalysisOutput(content, direction, maxLeverage) {
+  if (!content) return content;
+  const dir = (direction || "").toUpperCase();
+  const warnings = [];
+
+  const extractNum = (label) => {
+    const re = new RegExp(`${label}\\s*[:\\-]?\\s*\\$?([0-9][0-9.,]*)`);
+    const m = content.match(re);
+    return m ? parseFloat(m[1].replace(/,/g, "")) : null;
+  };
+
+  const entry = extractNum("Entry");
+  const sl = extractNum("SL");
+  const levMatch = content.match(/Leverage\s*[:\\-]?\s*([0-9]+)x?/i);
+  const lev = levMatch ? parseInt(levMatch[1], 10) : null;
+
+  if (entry != null && sl != null && !isNaN(entry) && !isNaN(sl)) {
+    if (dir === "LONG" && sl >= entry) warnings.push("SL no está por debajo del Entry (LONG)");
+    if (dir === "SHORT" && sl <= entry) warnings.push("SL no está por encima del Entry (SHORT)");
+  }
+
+  if (lev != null) {
+    if (lev > 4) warnings.push(`Leverage ${lev}x supera el máximo de 4x del protocolo`);
+    if (maxLeverage != null && lev > maxLeverage) warnings.push(`Leverage ${lev}x supera el max del par (${maxLeverage}x)`);
+  }
+
+  if (!warnings.length) return content;
+  return content + "\n\n⚠️ VALIDACIÓN: " + warnings.join(" | ");
+}
+
 async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], source = "auto") {
   if (symbol.endsWith(":BTC") && source === "auto") {
     source = "pionex";
@@ -225,6 +313,11 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], s
       results._leverage = maxLev ? { max: maxLev, source: "bitget" } : null;
     } catch (e) {
       results._leverage = null;
+    }
+    try {
+      results._funding = await fetchBitgetFunding(symbol);
+    } catch (e) {
+      results._funding = null;
     }
     return { data: results, exchange: "bitget" };
   }
@@ -282,6 +375,12 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], s
     results._leverage = maxLev ? { max: maxLev, source: "bitget" } : null;
   } catch (e) {
     results._leverage = null;
+  }
+
+  try {
+    results._funding = await fetchBitgetFunding(symbol);
+  } catch (e) {
+    results._funding = null;
   }
 
   return { data: results, exchange: "bitget" };
@@ -391,6 +490,34 @@ async function fetchPionexRiskTable(symbol) {
   return { max: Math.max(...tiers.map(t => t.maxLev)), tiers, source: "pionex" };
 }
 
+async function fetchPionexFunding(symbol) {
+  const pionexSymbol = symbolToPionex(symbol);
+  const url = `https://api.pionex.com/api/v1/market/fundingRates?symbol=${pionexSymbol}`;
+
+  const response = await axios.get(url, { timeout: 15000 });
+
+  if (!response.data?.result || !response.data?.data?.rates?.length) {
+    return null;
+  }
+
+  const rate = parseFloat(response.data.data.rates[0].fundingRate);
+  return isNaN(rate) ? null : rate * 100;
+}
+
+async function fetchBitgetFunding(symbol) {
+  const bitgetSymbol = symbol.replace("/USDT:USDT", "USDT");
+  const url = `https://api.bitget.com/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES&symbol=${bitgetSymbol}`;
+
+  const response = await axios.get(url, { timeout: 15000 });
+
+  if (response.data?.code !== "00000" || !response.data?.data?.length) {
+    return null;
+  }
+
+  const rate = parseFloat(response.data.data[0].fundingRate);
+  return isNaN(rate) ? null : rate * 100;
+}
+
 async function fetchFromPionex(symbol, timeframes = ["1h", "2h", "4h"]) {
   const results = {};
   for (const tf of timeframes) {
@@ -416,6 +543,13 @@ async function fetchFromPionex(symbol, timeframes = ["1h", "2h", "4h"]) {
   } catch (e) {
     console.log(`⚠️ Pionex riskTable falló ${symbol}: ${e.message}`);
     results._leverage = null;
+  }
+
+  try {
+    results._funding = await fetchPionexFunding(symbol);
+  } catch (e) {
+    console.log(`⚠️ Pionex funding falló ${symbol}: ${e.message}`);
+    results._funding = null;
   }
 
   const hasData = timeframes.some(tf => results[tf]?.length > 0);
@@ -489,6 +623,7 @@ INSTRUCCIONES:
 6. Si es NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
 7. NO muestres capital ni cálculos intermedios
 8. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+9. Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
@@ -528,7 +663,7 @@ async function analyzePair(base, timeframes = ["1h", "2h", "4h"]) {
   const btcIndicators = getLatestIndicators(btcResult.data["1h"], btcResult.data["4h"], btcResult.data["2h"]);
   const pairIndicators = getLatestIndicators(pairResult.data["1h"], pairResult.data["4h"], pairResult.data["2h"]);
   const btcText = formatIndicatorsText(btcIndicators, false);
-  const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(pairResult.data._leverage);
+  const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(pairResult.data._leverage) + "\n" + formatFundingText(pairResult.data._funding);
   const btcTickerText = formatTickerText(btcResult.data._ticker, "DATOS 24H BTC", false);
   const pairTickerText = formatTickerText(pairResult.data._ticker, "DATOS 24H " + pairResult.symbol, isBtcBase);
 
@@ -555,6 +690,7 @@ INSTRUCCIONES:
 7. Si es NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
 8. NO muestres capital ni cálculos intermedios
 9. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+10. Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del par:
 
@@ -589,6 +725,7 @@ INSTRUCCIONES:
 7. Si es NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
 8. NO muestres capital ni cálculos intermedios
 9. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+10. Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del par:
 
@@ -611,7 +748,7 @@ async function chatWithAI(userMessage) {
 
   const btcData = await fetchMarketData(["1h", "2h", "4h"]);
   const btcIndicators = getLatestIndicators(btcData["1h"], btcData["4h"], btcData["2h"]);
-  const btcText = formatIndicatorsText(btcIndicators) + "\n" + formatLeverageText(btcData._leverage);
+  const btcText = formatIndicatorsText(btcIndicators) + "\n" + formatLeverageText(btcData._leverage) + "\n" + formatFundingText(btcData._funding);
   const tickerText = formatTickerText(btcData._ticker, "DATOS 24H BTC");
 
   const content = `Eres un asistente trader experto en criptomonedas. Respondes preguntas sobre crypto, trading, análisis técnico, etc.
@@ -788,13 +925,19 @@ async function analyzeBotOpportunity(symbol, direction) {
   
   const isBtcBase = sym.endsWith(":BTC");
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"], data["2h"]);
-  const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(data._leverage);
+  const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(data._leverage) + "\n" + formatFundingText(data._funding);
   const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym, isBtcBase);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
   const currencySymbol = isBtcBase ? "" : "$";
   const currencyUnit = isBtcBase ? " BTC" : "";
+
+  const isMajor = isBtcBase || MAJOR_COINS.includes(sym.split("/")[0].toUpperCase());
+  const screenerProblems = evaluateScreener(pairIndicators, data._ticker, directionLabel, isMajor);
+  if (screenerProblems) {
+    return `❌ NO TRADE\n\nNo cumple los filtros del Screener (Sección 13 del protocolo) para BOT ${directionLabel}:\n• ${screenerProblems.join("\n• ")}`;
+  }
 
   return openRouterChat([{
     role: "user",
@@ -814,6 +957,7 @@ INSTRUCCIONES:
 5. Si es ${directionLabel}: calcula SL, rango, grids, leverage (máximo 4x según protocolo)
 ${isNeutral ? "6. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones" : ""}
 ${isNeutral ? "7. " : "6. "}EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+${isNeutral ? "8. " : "7. "}Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
@@ -826,7 +970,7 @@ RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 • Leverage: Xx
 
 ${isNeutral ? "NEUTRAL: Range donde opera el bot, SL fuera del range en ambas direcciones." : `SL/TP según protocolo: ${directionLabel === "LONG" ? "SL es límite inferior, TP límite superior" : "SL es límite superior, TP límite inferior"}.`}`
-  }]);
+  }]).then(res => validateAnalysisOutput(res, directionLabel, data._leverage?.max || null));
 }
 
 async function compareBotVsFutures(symbol, direction) {
@@ -835,11 +979,17 @@ async function compareBotVsFutures(symbol, direction) {
   const { data, exchange: sourceExchange } = await fetchMarketDataForPair(sym, timeframes);
 
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"], data["2h"]);
-  const pairText = formatIndicatorsText(pairIndicators) + "\n" + formatLeverageText(data._leverage);
+  const pairText = formatIndicatorsText(pairIndicators) + "\n" + formatLeverageText(data._leverage) + "\n" + formatFundingText(data._funding);
   const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
+
+  const isMajor = MAJOR_COINS.includes(sym.split("/")[0].toUpperCase());
+  const screenerProblems = evaluateScreener(pairIndicators, data._ticker, directionLabel, isMajor);
+  if (screenerProblems) {
+    return `❌ NO TRADE\n\nNo cumple los filtros del Screener (Sección 13 del protocolo) para ${directionLabel}:\n• ${screenerProblems.join("\n• ")}`;
+  }
 
   return openRouterChat([{
     role: "user",
@@ -858,6 +1008,7 @@ INSTRUCCIONES:
 4. COMPARA ambas opciones y recomienda cuál es mejor según las condiciones actuales del mercado
 5. Si el mercado está en rango (ADX bajo, RSI ~50), el BOT GRID (especialmente NEUTRAL) suele ser mejor. Si hay tendencia fuerte (ADX alto), los FUTUROS pueden ser mejores.
 6. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+7. Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
 
@@ -882,7 +1033,7 @@ RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
 • Motivo: [explicación breve]
 
 ${isNeutral ? "NEUTRAL: El bot grid opera comprando en el inferior del range y vendiendo en el superior. SL fuera del range en ambas direcciones." : `Para LONG: SL es límite inferior, TP es límite superior. Para SHORT: SL es límite superior, TP es límite inferior.`}`
-  }]);
+  }]).then(res => validateAnalysisOutput(res, directionLabel, data._leverage?.max || null));
 }
 
 async function analyzePairWithSource(base, source, direction) {
@@ -892,12 +1043,18 @@ async function analyzePairWithSource(base, source, direction) {
 
   const isBtcBase = sym.endsWith(":BTC");
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"], data["2h"]);
-  const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(data._leverage);
+  const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(data._leverage) + "\n" + formatFundingText(data._funding);
   const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym, isBtcBase);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
   const sourceLabel = sourceExchange === "pionex" ? "Pionex" : "Bitget";
+
+  const isMajor = isBtcBase || MAJOR_COINS.includes(sym.split("/")[0].toUpperCase());
+  const screenerProblems = evaluateScreener(pairIndicators, data._ticker, directionLabel, isMajor);
+  if (screenerProblems) {
+    return `❌ NO TRADE\n\nNo cumple los filtros del Screener (Sección 13 del protocolo) para BOT ${directionLabel} (${sourceLabel}):\n• ${screenerProblems.join("\n• ")}`;
+  }
 
   if (isBtcBase) {
     return openRouterChat([{
@@ -918,6 +1075,7 @@ INSTRUCCIONES:
 5. Si es ${directionLabel}: calcula SL, rango, grids, leverage (máximo 4x según protocolo)
 ${isNeutral ? "6. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones" : ""}
 ${isNeutral ? "7. " : "6. "}EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+${isNeutral ? "8. " : "7. "}Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
@@ -930,7 +1088,7 @@ RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 • Leverage: Xx
 
 ${isNeutral ? "NEUTRAL: Range donde opera el bot, SL fuera del range en ambas direcciones." : `SL/TP según protocolo: ${directionLabel === "LONG" ? "SL es límite inferior, TP límite superior" : "SL es límite superior, TP límite inferior"}.`}`
-    }]);
+    }]).then(res => validateAnalysisOutput(res, directionLabel, data._leverage?.max || null));
   }
 
   if (isNeutral) {
@@ -951,6 +1109,7 @@ INSTRUCCIONES:
 4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
 5. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
 6. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+7. Crowding: si el FUNDING RATE es extremo (|funding| > 0.05%), considera range más estrecho o NO TRADE (el mercado está hacinado en una dirección).
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 
@@ -963,7 +1122,7 @@ RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 • Leverage: Xx
 
 NEUTRAL: Range donde opera el bot, SL fuera del range en ambas direcciones.`
-    }]);
+    }]).then(res => validateAnalysisOutput(res, "NEUTRAL", data._leverage?.max || null));
   }
 
   return openRouterChat([{
@@ -987,6 +1146,7 @@ INSTRUCCIONES:
 7. Si solo Futuros cumple → muestra Futuros con 100% de capital
 8. Si ambas cumplen → distribuye el capital recomendado entre ambas (ej: 60% Bot / 40% Futuros)
 9. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+10. Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
 
@@ -1013,7 +1173,7 @@ RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
 • Motivo: [explicación breve]
 
 ${directionLabel === "LONG" ? "LONG: SL es límite inferior, TP es límite superior." : "SHORT: SL es límite superior, TP es límite inferior."}`
-  }]);
+  }]).then(res => validateAnalysisOutput(res, directionLabel, data._leverage?.max || null));
 }
 
 async function sendSafeTelegram(text) {
@@ -1046,7 +1206,7 @@ async function runHourlyAnalysis() {
     console.log("✅ Datos OHLCV de Pionex obtenidos");
 
     const indicators = getLatestIndicators(marketData["1h"], marketData["4h"], marketData["2h"]);
-    const indicatorsText = formatIndicatorsText(indicators) + "\n" + formatLeverageText(marketData._leverage);
+    const indicatorsText = formatIndicatorsText(indicators) + "\n" + formatLeverageText(marketData._leverage) + "\n" + formatFundingText(marketData._funding);
 
     console.log("🧠 Enviando a OpenRouter para análisis...");
     const analysis = await analyzeWithAI(indicatorsText, marketData._ticker);

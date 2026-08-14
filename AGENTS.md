@@ -80,6 +80,15 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - Se envía a un canal de Telegram (chat ID configurado)
 - **Filtro ATR del Screener (Sección 13 de `protocolo.txt`):** para BTC/Majors el ATR(1h) requerido es **>0.40%** (Long/Short) y **>0.30%** (Neutral); las altcoins mantienen **>1.2%** / **>1.8%**
 - **Filtro de Volumen (24h) del Screener (Sección 13):** **>200K USD** en las tres direcciones (Long, Short y Neutral)
+- **Alineación 4H:** RSI(4h) **≥50** para LONG y **≤50** para SHORT (Sección 13)
+- **Funding Rate:** **≤0.05%** para LONG y **≥-0.05%** para SHORT (evita crowding/hacinamiento). Pionex `GET /api/v1/market/fundingRates?symbol=XXX_PERP`, Bitget `GET /api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES&symbol=XXXUSDT` → `%`
+
+## Gate duro del Screener (`evaluateScreener`)
+
+- `evaluateScreener(pairIndicators, ticker, direction, isMajor)` computa **determinísticamente** los filtros de la Sección 13 (vol 24h >200K, ATR 1h, ADX 1h 25–35, RSI 1h, RSI 4h alineado, ADX 4h 15–25, change 24h, y NEUTRAL: ADX <18, RSI 45–55, change −3/3%).
+- Se aplica en `analyzeBotOpportunity`, `compareBotVsFutures` y `analyzePairWithSource` **antes de llamar a la IA**: si falla → responde `❌ NO TRADE` con el motivo, sin gastar el LLM.
+- `MAJOR_COINS` (BTC, ETH, BNB, SOL, ...) usa umbral ATR 0.40%/0.30%; el resto altcoins 1.2%/1.8%.
+- `validateAnalysisOutput(content, direction, maxLeverage)` parsea la respuesta de la IA y agrega warning `⚠️ VALIDACIÓN` si SL está del lado incorrecto o leverage > 4x / > max del par.
 
 ## Timeframes de análisis (1h + 2h + 4h)
 
@@ -101,6 +110,14 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - **Bitget:** ccxt → `exchange.markets[symbol].limits.leverage.max` tras `exchange.loadMarkets()`. Ej `DOS/USDT:USDT` = **10x**. `{ max, source: "bitget" }`.
 - `formatLeverageText(leverage)` formatea el máximo + 4 escalones por nocional (`25x hasta 10,000 USDT | ...`). Si falla → `N/A`.
 - **Regla en prompts y Sección 5 de `protocolo.txt`:** el leverage final (máx 4x por protocolo) **debe ser ≤ al max leverage del par**; si el máximo del par es bajo, dimensionar range/SL/exposición más conservador y señalar si no alcanza para la convicción deseada.
+
+## Funding Rate (crowding)
+
+- El bot obtiene el **funding rate actual** de cada par y lo manda a la IA como bloque `--- FUNDING RATE ---` en todos los flujos (`formatFundingText(funding)`).
+- **Pionex:** `GET /api/v1/market/fundingRates?symbol=XXX_PERP` (público) → `fundingRate` fracción × 100 = %. `fetchPionexFunding()`.
+- **Bitget:** `GET /api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES&symbol=XXXUSDT` (público) → `fundingRate` fracción × 100 = %. `fetchBitgetFunding()`. (ccxt `fetchTicker` NO expone `fundingRate` para Bitget).
+- Se almacena como `data._funding` (porcentaje) en `fetchFromPionex` y ambas rutas de Bitget de `fetchMarketDataForPair`.
+- **Regla en prompts y Sección 13:** LONG requiere funding **≤0.05%** y SHORT **≥-0.05%**; funding extremo → reduce convicción o NO TRADE.
 
 ## Indicadores técnicos (`indicators.js`)
 
