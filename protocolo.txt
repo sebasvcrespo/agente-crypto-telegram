@@ -72,6 +72,8 @@ TimeframeBehaviorUse Case1HReactive, follows price closely — weak/fragile supp
 
 Important: range timeframe choice affects grid efficiency/frequency, NOT risk control. Risk control comes exclusively from SL (point 3) and position sizing (point 4).
 
+In practice (data provided by the bot): define the grid RANGE using the BB(20,2) of 2H as the primary reference, using 1H BB only as fine structure. Anchor the SL to structural support/resistance (4H BB band or swing) ± 1-1.5×ATR(14) of 1H. If the resulting SL implies a loss >8-10% of allocated capital at 1x, reduce position size (point 4) and/or drop leverage one tier (point 5) so the projected real loss lands in 5-8%.
+
 
 
 7. OUTPUT FORMAT — Clean Final Numbers Only

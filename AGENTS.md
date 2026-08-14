@@ -6,7 +6,7 @@ Bot de Telegram que analiza criptomonedas usando datos de exchanges y los envía
 
 | Archivo | Función |
 |---------|---------|
-| `index.js` (~1080 líneas) | Bot principal: Telegram handler, parsing de comandos, APIs de exchanges, análisis con IA |
+| `index.js` (~1250 líneas) | Bot principal: Telegram handler, parsing de comandos, APIs de exchanges, análisis con IA |
 | `indicators.js` | Indicadores técnicos: BB, RSI, ATR, ADX, SellBuyRate |
 | `protocolo.txt` | Protocolo de trading completo (13 secciones) para prompts de IA |
 | `.env` | Variables de entorno (no versionado) |
@@ -36,7 +36,7 @@ OPENROUTER_API_KEY=...
 - Pares en base BTC soportados: `ADA/BTC`, `ORDI/BTC`, `PAXG/BTC`, `LINK/BTC`, `XRP/BTC`, `SOL/BTC`, `ETH/BTC`, `BNB/BTC`, `DOGE/BTC`, `SUI/BTC` (y cualquier par cruzado contra BTC).
 - 601+ pares perpetuos disponibles
 - Función de conversión: `symbolToPionex()` en `index.js` (reemplaza `/` → `_`, `:USDT` o `:BTC` → `_PERP`)
-- Klines endpoint: `GET /api/v1/market/klines?symbol=XXX_PERP&interval=60M&limit=100`
+- Klines endpoint: `GET /api/v1/market/klines?symbol=XXX_PERP&interval=60M|120M|4H&limit=100` (1h, 2h, 4h)
 - Tickers endpoint: `GET /api/v1/market/tickers?symbol=XXX_PERP`
 
 ### Formato de conversión de símbolo
@@ -81,6 +81,19 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - **Filtro ATR del Screener (Sección 13 de `protocolo.txt`):** para BTC/Majors el ATR(1h) requerido es **>0.40%** (Long/Short) y **>0.30%** (Neutral); las altcoins mantienen **>1.2%** / **>1.8%**
 - **Filtro de Volumen (24h) del Screener (Sección 13):** **>200K USD** en las tres direcciones (Long, Short y Neutral)
 
+## Timeframes de análisis (1h + 2h + 4h)
+
+- Todos los flujos (`analyzePair`, `analyzeBotOpportunity`, `compareBotVsFutures`, `analyzePairWithSource`, `runHourlyAnalysis`, `chatWithAI`) fetchean **1h, 2h y 4h** (`timeframes = ["1h", "2h", "4h"]`).
+- `getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h)` calcula **BB(20,2) en 1H, 2H y 4H** (`bb_1h`, `bb_2h`, `bb_4h`).
+- `formatIndicatorsText` envía a la IA las 3 BB con su **ancho %** relativo al precio, más un bloque `REFERENCIA RANGE/SL`.
+
+### Rango / SL (lógica definida en Sección 6 de `protocolo.txt`)
+
+- **RANGE del bot grid** → **BB(20,2) de 2H** como referencia principal (BB 1H solo como estructura fina). Evita usar BB 4H sola: es ~2× más ancha y genera SL/rango enormes.
+- **SL** → soporte/resistencia estructural (BB 4H o swing) **± 1–1.5×ATR(14) de 1H**.
+- Si el SL implica pérdida **>8–10% a 1x**, reducir capital (Sección 4) y/o bajar leverage (Sección 5) hasta dejar pérdida real proyectada en **5–8%**.
+- Los prompts de análisis incluyen un bullet `EXTRA:` con esta directiva (8 bloques de instrucciones en `index.js`).
+
 ## Indicadores técnicos (`indicators.js`)
 
 | Indicador | Función | Default |
@@ -90,6 +103,9 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 | ATR | `ATR(high, low, close, period)` | 14 |
 | ADX | `calculateADX(high, low, close, period)` | 14 |
 | SellBuyRate | `calculateSellBuyRate(o, h, l, c, v, period)` | 34 |
+
+- `getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h)` devuelve `bb_1h`, `bb_2h`, `bb_4h`, RSI/ADX/ATR de 1h y 4h, y `sellBuyRate`.
+- `getIndicatorsForTimeframe(ohlcv, tf)` calcula todos los indicadores para una TF puntual (usado por `/PAR ADX 1h`, `/PAR BB`, etc.).
 
 ## Comandos útiles
 
@@ -128,4 +144,5 @@ node index.js > log.txt 2>&1 &
 - **Bitget swap:** ccxt ya usa perpetuos por defecto con `defaultType: 'swap'`
 - **Fallback:** Cuando Pionex falla, el bot intenta Bitget automáticamente (en modo auto)
 - **Persistencia de estado:** `chatId` y `botStatus` se guardan en `state.json` (no versionado, ver `.gitignore`) via `setChatId()`/`setBotStatus()`. Sobreviven a restarts/deploys para que el análisis horario no se salte por `chatId=null`
+- **Rango/SL acotado:** el range del bot usa BB 2H (no BB 4H sola) y el SL se ancla a estructura ± 1–1.5×ATR(1h). Ver sección "Timeframes de análisis".
 - **Protocolo de trading:** Ver `protocolo.txt` para la lógica completa de análisis

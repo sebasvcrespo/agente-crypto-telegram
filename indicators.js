@@ -148,8 +148,8 @@ export function calculateSellBuyRate(open, high, low, close, volume, period = 34
   return linreg(raw.slice(len - period, len), period);
 }
 
-export function getLatestIndicators(ohlcv1h, ohlcv4h) {
-  console.log(`📐 Indicators: 1h=${ohlcv1h?.length || 0} velas, 4h=${ohlcv4h?.length || 0} velas`);
+export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null) {
+  console.log(`📐 Indicators: 1h=${ohlcv1h?.length || 0} velas, 2h=${ohlcv2h?.length || 0} velas, 4h=${ohlcv4h?.length || 0} velas`);
   const extract = (data, idx) => data.map(d => d[idx]);
 
   const o1 = extract(ohlcv1h, 1), h1 = extract(ohlcv1h, 2),
@@ -161,6 +161,8 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h) {
   const lastC4 = c4[c4.length - 1];
   const lastTime = new Date(ohlcv1h[ohlcv1h.length - 1][0]);
 
+  const bb1h = calculateBB(c1, 20, 2);
+  const bb2h = ohlcv2h && ohlcv2h.length ? calculateBB(extract(ohlcv2h, 4), 20, 2) : null;
   const bb4h = calculateBB(c4, 20, 2);
   const rsi1h = calculateRSI(c1, 14);
   const rsi4h = calculateRSI(c4, 14);
@@ -174,6 +176,8 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h) {
     precio: lastC1,
     precio4h: lastC4,
     timestamp: lastTime.toISOString(),
+    bb_1h: bb1h,
+    bb_2h: bb2h,
     bb_4h: bb4h,
     rsi: { "1h": rsi1h, "4h": rsi4h },
     adx: { "1h": adx1h, "4h": adx4h },
