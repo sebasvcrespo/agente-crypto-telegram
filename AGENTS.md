@@ -108,6 +108,7 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - Ranking de los que pasan: `Score = |SellBuyRate(30m) normalizado| × (ADX(30m)/20)`; el SBR crudo es volumen-pesado y no comparable entre pares → `indicators.sellBuyRate30mNorm` lo divide por el volumen medio de 34 velas de 30m. Solo el top 1 va a la IA (`analyzeWithAI30m` con `symbolLabel` del par).
 - El ticker pasado a `analyzeWithAI30m` va convertido a USD (`tickerWithUsdVolume`) para que la IA vea el volumen 24h en dólares, no en BTC.
 - Salida: un único mensaje consolidado `⏱️ ESCANEO MULTI-PAR (30M)` con mejor oportunidad (+config IA), otros que pasaron (dirección+score), NO TRADE con motivo L/S y errores de fetch. Si ninguno pasa → mensaje compacto sin gastar LLM.
+- **Comando manual `Escaneo`:** dispara `runMultiPairScan(true)` inmediatamente (ignora estado Cerrado). Con par (`Escaneo ETH/BTC`, `escaneo sol`, `escaneo ORDIBTC`...) dispara `runSinglePairScan()`: normaliza cualquier formato vía `normalizeScanPair()` (acepta `ETH`, `ETH/BTC`, `ETHBTC`, `/USDT`, `:BTC`...), corre el screener 30m en las 3 direcciones; si alguna pasa → IA para ese par; si ninguna pasa → reporte detallado de filtros fallidos por dirección sin gastar LLM. Funciona con pares base USDT también (sin conversión de volumen).
 
 ## Gate duro del Screener (`evaluateScreener`)
 

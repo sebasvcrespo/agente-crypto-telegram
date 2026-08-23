@@ -1566,6 +1566,71 @@ async function runMultiPairScan(force = false) {
   }
 }
 
+function normalizeScanPair(input) {
+  let s = (input || "").trim().toUpperCase().replace(/\s+/g, "");
+  s = s.replace(/:(USDT|BTC)$/, "").replace(/\/PERP$/, "");
+  if (!s) return null;
+  if (s.endsWith("/BTC")) return { base: s.replace(/\/BTC$/, ""), quote: "BTC", label: s };
+  if (s.endsWith("/USDT")) return { base: s.replace(/\/USDT$/, ""), quote: "USDT", label: s };
+  if (s.length > 3 && s.endsWith("BTC")) return { base: s.slice(0, -3), quote: "BTC", label: s.slice(0, -3) + "/BTC" };
+  if (s.length > 4 && s.endsWith("USDT")) return { base: s.slice(0, -4), quote: "USDT", label: s.slice(0, -4) + "/USDT" };
+  return { base: s, quote: "USDT", label: s + "/USDT" };
+}
+
+async function runSinglePairScan(rawInput) {
+  const parsed = normalizeScanPair(rawInput);
+  if (!parsed || !parsed.base) {
+    await sendSafeTelegram(`⚠️ No pude interpretar el par "${rawInput}". Ejemplos: escaneo ETH/BTC · escaneo SOL · escaneo ORDI/BTC`);
+    return;
+  }
+  const symbol = parsed.quote === "BTC" ? `${parsed.base}/BTC:BTC` : `${parsed.base}/USDT:USDT`;
+  const displayLabel = parsed.quote === "BTC" ? `${parsed.base}/BTC` : `${parsed.base}/USDT`;
+  console.log(`🔄 Escaneo manual de ${symbol}...`);
+  try {
+    const marketData = await fetchFromPionex(symbol, ["30m", "1h", "2h", "4h"]);
+    const indicators = getLatestIndicators(marketData["1h"], marketData["4h"], marketData["2h"], marketData["30m"]);
+    const ticker = marketData._ticker;
+    const isMajor = MAJOR_COINS.includes(parsed.base);
+
+    let tickerForScreener = ticker;
+    if (parsed.quote === "BTC") {
+      tickerForScreener = tickerWithUsdVolume(ticker, true, await getBtcUsdPrice());
+    }
+
+    const results = {};
+    for (const dir of ["LONG", "SHORT", "NEUTRAL"]) {
+      results[dir] = evaluateScreener30m(indicators, tickerForScreener, dir, isMajor);
+    }
+    const passedDirs = Object.entries(results).filter(([, p]) => !p).map(([d]) => d);
+
+    let msg = `⏱️ ESCANEO MANUAL: ${displayLabel}\n\n`;
+
+    if (!passedDirs.length) {
+      msg += `❌ NO TRADE (Screener 30m)\n`;
+      msg += `• LONG → ${results.LONG.join("; ")}\n`;
+      msg += `• SHORT → ${results.SHORT.join("; ")}\n`;
+      msg += `• NEUTRAL → ${results.NEUTRAL.join("; ")}`;
+      console.log(`🚫 ${displayLabel}: NO TRADE`);
+    } else {
+      const indicatorsText = formatIndicatorsText(indicators, parsed.quote === "BTC") + "\n" + formatLeverageText(marketData._leverage) + "\n" + formatFundingText(marketData._funding);
+      const analysis = await analyzeWithAI30m(indicatorsText, tickerForScreener, displayLabel);
+      const direction = extractDirection30m(analysis);
+      const validated = validateAnalysisOutput(analysis, direction, marketData._leverage?.max ?? null);
+      msg += `Dirección(es) que pasaron el screener: ${passedDirs.join(", ")}\n\n${validated.trim()}`;
+      console.log(`✅ ${displayLabel}: pasa screener (${passedDirs.join("/")}) — enviado a IA`);
+    }
+
+    await sendSafeTelegram(msg);
+    console.log(`✅ Escaneo manual de ${displayLabel} completado y enviado.`);
+  } catch (error) {
+    console.error(`❌ Error en escaneo manual ${rawInput}:`, error.message);
+    if (error.response) {
+      console.error("Detalle:", JSON.stringify(error.response.data, null, 2).slice(0, 500));
+    }
+    await sendSafeTelegram(`⚠️ Error analizando ${rawInput}: ${error.message}\nVerificá que el par exista como perpetuo en Pionex (ej: ETH/BTC o SOL).`);
+  }
+}
+
 cron.schedule("0,30 * * * *", () => {
   setTimeout(() => {
     console.log("⏰ Cron multi-par ejecutándose...");
@@ -1739,6 +1804,20 @@ bot.on("message:text", async (ctx) => {
       runMultiPairScan(true).catch(async (err) => {
         console.error("❌ Error en escaneo manual:", err.message);
         await ctx.reply(`⚠️ Error en escaneo manual: ${err.message}`);
+      });
+      return;
+    }
+
+    if (text.startsWith("escaneo ") && text.length > "escaneo ".length) {
+      if (!chatId) {
+        await ctx.reply("⚠️ Aún no tengo registrado tu chat. Escribí *Abierto* primero.", { parse_mode: "Markdown" });
+        return;
+      }
+      const arg = rawText.trim().slice("escaneo".length).trim();
+      await ctx.reply(`⏱️ Analizando ${arg} en 30M...\n\nToma ~10 segundos.`);
+      runSinglePairScan(arg).catch(async (err) => {
+        console.error("❌ Error en escaneo manual de par:", err.message);
+        await ctx.reply(`⚠️ Error analizando ${arg}: ${err.message}`);
       });
       return;
     }
