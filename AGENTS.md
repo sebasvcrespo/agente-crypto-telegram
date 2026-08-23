@@ -98,6 +98,16 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
   - No filtra por cambio 24h ni alineación estricta de RSI 4H (permite contra-tendencia; la IA debe bajar convicción en ese caso)
 - Crowding por funding se evalúa en el prompt (no en el gate), igual que en el flujo horario.
 
+## Escaneo multi-par base BTC (`runMultiPairScan`)
+
+- Cron `0,30 * * * *` con `setTimeout` de **30s** (arranca a :00:30 y :30:30, después de los flujos A y B).
+- Lista fija `MULTI_PAIR_LIST`: XRP, ADA, ORDI, LINK, SUI, DOGE, SOL, PAXG, ETH, BNB (todos `/BTC:BTC`, perpetuos Pionex).
+- Iteración secuencial con `sleep(1200)` por par; fetch `["30m","1h","2h","4h"]` + indicadores 30m.
+- Gate: `evaluateScreener30m` en las 3 direcciones (majors según `MAJOR_COINS`; ORDI/SUI/PAXG caen como alts). Como máximo una dirección puede pasar por diseño (rangos de RSI/ADX mutuamente excluyentes).
+- **Conversión de volumen:** para pares base BTC el `quoteVolume` viene en BTC → `tickerWithUsdVolume(ticker, true, btcUsd)` lo multiplica por el precio BTC/USDT (`getBtcUsdPrice()`, Pionex con fallback ccxt) antes del screener. Sin esto, TODOS los pares base BTC quedan bloqueados por el filtro de 200K. Los call sites de `evaluateScreener` en `analyzeBotOpportunity`, `compareBotVsFutures` y `analyzePairWithSource` aplican la misma conversión.
+- Ranking de los que pasan: `Score = |SellBuyRate(30m)| × (ADX(30m)/20)`; solo el top 1 va a la IA (`analyzeWithAI30m` con `symbolLabel` del par).
+- Salida: un único mensaje consolidado `⏱️ ESCANEO MULTI-PAR (30M)` con mejor oportunidad (+config IA), otros que pasaron (dirección+score), NO TRADE con motivo L/S y errores de fetch. Si ninguno pasa → mensaje compacto sin gastar LLM.
+
 ## Gate duro del Screener (`evaluateScreener`)
 
 - `evaluateScreener(pairIndicators, ticker, direction, isMajor)` computa **determinísticamente** los filtros de la Sección 13 (vol 24h >200K, ATR 1h, ADX 1h 25–35, RSI 1h, RSI 4h alineado, ADX 4h 15–25, change 24h, y NEUTRAL: ADX <18, RSI 45–55, change −3/3%).
