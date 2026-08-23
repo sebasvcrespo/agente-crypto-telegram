@@ -101,7 +101,7 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 ## Escaneo multi-par base BTC (`runMultiPairScan`)
 
 - Cron `0,30 * * * *` con `setTimeout` de **30s** (arranca a :00:30 y :30:30, después de los flujos A y B).
-- Lista fija `MULTI_PAIR_LIST`: XRP, ADA, ORDI, LINK, SUI, DOGE, SOL, PAXG, ETH, BNB (todos `/BTC:BTC`, perpetuos Pionex).
+- Lista fija `MULTI_PAIR_LIST`: XRP/BTC, ADA/BTC, ORDI/BTC, LINK/BTC, SUI/BTC, DOGE/BTC, SOL/BTC, PAXG/BTC, ETH/BTC, BNB/BTC (con sufijo `/BTC` para que `symbolForPair()` derive `XXX/BTC:BTC` → perpetuo Pionex `XXX_BTC_PERP`; NO pasar solo el ticker o fetchea `/USDT`).
 - Iteración secuencial con `sleep(1200)` por par; fetch `["30m","1h","2h","4h"]` + indicadores 30m.
 - Gate: `evaluateScreener30m` en las 3 direcciones (majors según `MAJOR_COINS`; ORDI/SUI/PAXG caen como alts). Como máximo una dirección puede pasar por diseño (rangos de RSI/ADX mutuamente excluyentes).
 - **Conversión de volumen:** para pares base BTC el `quoteVolume` viene en BTC → `tickerWithUsdVolume(ticker, true, btcUsd)` lo multiplica por el precio BTC/USDT (`getBtcUsdPrice()`, Pionex con fallback ccxt) antes del screener. Sin esto, TODOS los pares base BTC quedan bloqueados por el filtro de 200K. Los call sites de `evaluateScreener` en `analyzeBotOpportunity`, `compareBotVsFutures` y `analyzePairWithSource` aplican la misma conversión.

@@ -224,7 +224,7 @@ function formatFundingText(funding) {
 
 const MAJOR_COINS = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "LINK", "AVAX", "TON", "TRX", "LTC", "DOT", "BCH"];
 
-const MULTI_PAIR_LIST = ["XRP", "ADA", "ORDI", "LINK", "SUI", "DOGE", "SOL", "PAXG", "ETH", "BNB"];
+const MULTI_PAIR_LIST = ["XRP/BTC", "ADA/BTC", "ORDI/BTC", "LINK/BTC", "SUI/BTC", "DOGE/BTC", "SOL/BTC", "PAXG/BTC", "ETH/BTC", "BNB/BTC"];
 
 function evaluateScreener(pairIndicators, ticker, direction, isMajor = false) {
   const dir = (direction || "").toUpperCase();
@@ -1460,7 +1460,7 @@ cron.schedule("30 * * * *", () => {
 });
 
 function pairLabel(symbol) {
-  return symbol.replace(":BTC", "/BTC").replace(":USDT", "/USDT");
+  return symbol.replace(/:(USDT|BTC)$/, "");
 }
 
 async function runMultiPairScan() {
@@ -1482,7 +1482,7 @@ async function runMultiPairScan() {
       const marketData = await fetchFromPionex(symbol, ["30m", "1h", "2h", "4h"]);
       const indicators = getLatestIndicators(marketData["1h"], marketData["4h"], marketData["2h"], marketData["30m"]);
       const ticker = marketData._ticker;
-      const isMajor = MAJOR_COINS.includes(base);
+      const isMajor = MAJOR_COINS.includes(base.replace(/\/BTC$/, ""));
 
       const candidates = [];
       const failLines = [];
@@ -1500,14 +1500,14 @@ async function runMultiPairScan() {
         const sbr = indicators.sellBuyRate30m ?? indicators.sellBuyRate ?? 0;
         const score = Math.abs(sbr) * (adx30 / 20);
         passed.push({ base, symbol, indicators, marketData, ticker, direction: candidates[0], score });
-        console.log(`✅ ${base}/BTC: pasa screener (${candidates.join("/")}) score=${score.toFixed(2)}`);
+        console.log(`✅ ${base}: pasa screener (${candidates.join("/")}) score=${score.toFixed(2)}`);
       } else {
-        failed.push(`${base}/BTC → ${failLines.join(" | ")}`);
-        console.log(`🚫 ${base}/BTC: NO TRADE`);
+        failed.push(`${base} → ${failLines.join(" | ")}`);
+        console.log(`🚫 ${base}: NO TRADE`);
       }
     } catch (e) {
-      console.error(`⚠️ Error escaneando ${base}/BTC:`, e.message);
-      errors.push(`${base}/BTC → error: ${e.message}`);
+      console.error(`⚠️ Error escaneando ${base}:`, e.message);
+      errors.push(`${base} → error: ${e.message}`);
     }
 
     await sleep(1200);
