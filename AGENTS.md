@@ -195,5 +195,6 @@ node index.js > log.txt 2>&1 &
 - **Bitget swap:** ccxt ya usa perpetuos por defecto con `defaultType: 'swap'`
 - **Fallback:** Cuando Pionex falla, el bot intenta Bitget automáticamente (en modo auto)
 - **Persistencia de estado:** `chatId` y `botStatus` se guardan en `state.json` (no versionado, ver `.gitignore`) via `setChatId()`/`setBotStatus()`. Sobreviven a restarts/deploys para que el análisis horario no se salte por `chatId=null`
+- **Semántica de estado (invertida):** `Abierto` = alertas automáticas ACTIVAS (default al arrancar sin state.json); `Cerrado` = alertas PAUSADAS (los 3 flujos automáticos omiten el ciclo). Los guards chequean `botStatus === "Cerrado"`. Nota: un `state.json` viejo con `"Cerrado"` (semántica anterior) dejará al bot pausado tras el deploy → escribir `Abierto` en Telegram una vez.
 - **Rango/SL acotado:** el range del bot usa BB 2H (no BB 4H sola) y el SL se ancla a estructura ± 1–1.5×ATR(1h). Ver sección "Timeframes de análisis".
 - **Protocolo de trading:** Ver `protocolo.txt` para la lógica completa de análisis

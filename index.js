@@ -49,7 +49,7 @@ function loadState() {
 }
 
 const state = loadState();
-let botStatus = state.botStatus || "Cerrado";
+let botStatus = state.botStatus || "Abierto";
 let chatId = state.chatId || null;
 
 function saveState() {
@@ -1361,7 +1361,7 @@ async function sendSafeTelegram(text) {
 }
 
 async function runHourlyAnalysis() {
-  if (botStatus === "Abierto" || !chatId) {
+  if (botStatus === "Cerrado" || !chatId) {
     console.log(`⏭️ Análisis automático saltado: status="${botStatus}", chatId="${chatId}"`);
     return;
   }
@@ -1396,7 +1396,7 @@ function extractDirection30m(content) {
 }
 
 async function runHalfHourlyAnalysis() {
-  if (botStatus === "Abierto" || !chatId) {
+  if (botStatus === "Cerrado" || !chatId) {
     console.log(`⏭️ Análisis 30m saltado: status="${botStatus}", chatId="${chatId}"`);
     return;
   }
@@ -1464,7 +1464,7 @@ function pairLabel(symbol) {
 }
 
 async function runMultiPairScan() {
-  if (botStatus === "Abierto" || !chatId) {
+  if (botStatus === "Cerrado" || !chatId) {
     console.log(`⏭️ Escaneo multi-par saltado: status="${botStatus}", chatId="${chatId}"`);
     return;
   }
@@ -1586,8 +1586,8 @@ bot.command("start", async (ctx) => {
       "*Comandos básicos:*\n" +
       "• `/PAR` — Analiza cualquier par con contexto BTC (ej: `/ETH`, `/BTC`)\n" +
       "• `/PAR TF` — Todos los indicadores en una temporalidad (ej: `/ETH 1h`, `/ADA 4h`)\n" +
-      "• `Cerrado` — Activa el análisis automático de BTC cada hora (usa Pionex)\n" +
-      "• `Abierto` — Pausa el análisis automático\n\n" +
+      "• `Abierto` — Activa las alertas automáticas (BTC 1H, BTC 30M y escaneo multi-par)\n" +
+      "• `Cerrado` — Pausa las alertas automáticas\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
       "• `/PAR FUENTE DIRECCION` — Bot+Futuros con fuente (ej: `/ETH Pionex Long`, `/BTC Bitget Short`)\n" +
@@ -1633,9 +1633,9 @@ bot.command("help", async (ctx) => {
     "• `/ETH FUTUROS LONG` — Configuración futuros LONG\n" +
     "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT\n" +
     "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros\n\n" +
-    "*Análisis horario automático:*\n" +
-    "• `Cerrado` — Activa (usa Pionex)\n" +
-    "• `Abierto` — Pausa\n\n" +
+    "*Alertas automáticas:*\n" +
+    "• `Abierto` — Activa (BTC 1H, BTC 30M, multi-par)\n" +
+    "• `Cerrado` — Pausa\n\n" +
     "*Fuentes:* `Bitget`, `Pionex`\n" +
     "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
     { parse_mode: "Markdown" }
@@ -1705,16 +1705,15 @@ bot.on("message:text", async (ctx) => {
 
     if (text === "abierto") {
       setBotStatus("Abierto");
-      await ctx.reply("🔒 *Modo Abierto* — Análisis automático pausado.\n\nCuando cierres tu bot, escribe *Cerrado* para reanudar.", { parse_mode: "Markdown" });
-      console.log("🔒 Bot status cambiado a: Abierto");
+      await ctx.reply("🔓 *Modo Abierto* — Alertas activadas.\n\nRecibirás los análisis automáticos: BTC 1H (min 0), BTC 30M (min 30) y escaneo multi-par base BTC (min 0 y 30 +30s). Escribe *Cerrado* para pausarlas.", { parse_mode: "Markdown" });
+      console.log("🔓 Bot status cambiado a: Abierto");
       return;
     }
 
     if (text === "cerrado") {
       setBotStatus("Cerrado");
-      await ctx.reply("🔓 *Modo Cerrado* — Análisis automático activado.\n\nCada hora analizaré BTCUSDT y te enviaré la configuración.", { parse_mode: "Markdown" });
-      console.log("🔓 Bot status cambiado a: Cerrado");
-      await runHourlyAnalysis();
+      await ctx.reply("🔒 *Modo Cerrado* — Alertas pausadas.\n\nNo recibirás más análisis automáticos hasta que escribas *Abierto*.", { parse_mode: "Markdown" });
+      console.log("🔒 Bot status cambiado a: Cerrado");
       return;
     }
 
