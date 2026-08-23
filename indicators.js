@@ -148,8 +148,8 @@ export function calculateSellBuyRate(open, high, low, close, volume, period = 34
   return linreg(raw.slice(len - period, len), period);
 }
 
-export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null) {
-  console.log(`📐 Indicators: 1h=${ohlcv1h?.length || 0} velas, 2h=${ohlcv2h?.length || 0} velas, 4h=${ohlcv4h?.length || 0} velas`);
+export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null, ohlcv30m = null) {
+  console.log(`📐 Indicators: 1h=${ohlcv1h?.length || 0} velas, 2h=${ohlcv2h?.length || 0} velas, 4h=${ohlcv4h?.length || 0} velas, 30m=${ohlcv30m?.length || 0} velas`);
   const extract = (data, idx) => data.map(d => d[idx]);
 
   const o1 = extract(ohlcv1h, 1), h1 = extract(ohlcv1h, 2),
@@ -172,6 +172,18 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null) {
   const atr4h = calculateATR(h4, l4, c4, 14);
   const sbr = calculateSellBuyRate(o1, h1, l1, c1, v1, 34);
 
+  const has30m = ohlcv30m && ohlcv30m.length > 0;
+  const o30 = has30m ? extract(ohlcv30m, 1) : null;
+  const h30 = has30m ? extract(ohlcv30m, 2) : null;
+  const l30 = has30m ? extract(ohlcv30m, 3) : null;
+  const c30 = has30m ? extract(ohlcv30m, 4) : null;
+  const v30 = has30m ? extract(ohlcv30m, 5) : null;
+  const bb30m = has30m ? calculateBB(c30, 20, 2) : null;
+  const rsi30m = has30m ? calculateRSI(c30, 14) : null;
+  const adx30m = has30m ? calculateADX(h30, l30, c30, 14) : null;
+  const atr30m = has30m ? calculateATR(h30, l30, c30, 14) : null;
+  const sbr30m = has30m ? calculateSellBuyRate(o30, h30, l30, c30, v30, 34) : null;
+
   return {
     precio: lastC1,
     precio4h: lastC4,
@@ -179,15 +191,19 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null) {
     bb_1h: bb1h,
     bb_2h: bb2h,
     bb_4h: bb4h,
-    rsi: { "1h": rsi1h, "4h": rsi4h },
-    adx: { "1h": adx1h, "4h": adx4h },
+    bb_30m: bb30m,
+    rsi: { "1h": rsi1h, "4h": rsi4h, "30m": rsi30m },
+    adx: { "1h": adx1h, "4h": adx4h, "30m": adx30m },
     atr: {
       "1h": atr1h,
       "4h": atr4h,
+      "30m": atr30m,
       "1h_pct": atr1h ? `${(atr1h / lastC1 * 100).toFixed(2)}%` : null,
-      "4h_pct": atr4h ? `${(atr4h / lastC4 * 100).toFixed(2)}%` : null
+      "4h_pct": atr4h ? `${(atr4h / lastC4 * 100).toFixed(2)}%` : null,
+      "30m_pct": atr30m ? `${(atr30m / lastC1 * 100).toFixed(2)}%` : null
     },
-    sellBuyRate: sbr
+    sellBuyRate: sbr,
+    sellBuyRate30m: sbr30m
   };
 }
 

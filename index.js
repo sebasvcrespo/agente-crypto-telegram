@@ -113,6 +113,25 @@ function formatIndicatorsText(data, isBtcBase = false) {
 
   const sbr = data.sellBuyRate !== null ? data.sellBuyRate.toFixed(2) : "N/A";
 
+  const has30m = data.rsi?.["30m"] != null;
+  let block30m = "";
+  if (has30m) {
+    const r30 = data.rsi["30m"]?.toFixed(1) ?? "N/A";
+    const a30 = data.adx["30m"];
+    const adx30 = a30 ? `ADX ${a30.adx} | DI+ ${a30.diPlus} | DI- ${a30.diMinus}` : "N/A";
+    const at30 = data.atr["30m"] ? `${data.atr["30m"].toFixed(dec)}${currencyUnit} (${data.atr["30m_pct"]})` : "N/A";
+    const bb30Line = formatBBLine("30M", data.bb_30m);
+    const sbr30 = data.sellBuyRate30m !== null && data.sellBuyRate30m !== undefined ? data.sellBuyRate30m.toFixed(2) : "N/A";
+    block30m = `
+--- INDICADORES 30M (vela cerrada) ---
+RSI(14): ${r30}
+ADX/DMI(14): ${adx30}
+ATR(14): ${at30}
+Sell/Buy Rate(34): ${sbr30}
+${bb30Line}
+`;
+  }
+
   const output = `
 PRECIO ACTUAL: ${currencySymbol}${data.precio.toFixed(dec)}${currencyUnit} (1H) | ${currencySymbol}${data.precio4h.toFixed(dec)}${currencyUnit} (4H)
 HORA (UTC): ${data.timestamp}
@@ -127,13 +146,14 @@ RSI(14): ${r4}
 ADX/DMI(14): ${adx4}
 ATR(14): ${at4}
 ${bbLines}
-
+${block30m}
 --- SELL/BUY RATES (periodo 34) ---
 Valor: ${sbr}
 ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : "→ Presión VENDEDORA dominante") : ""}
 
 --- REFERENCIA RANGE/SL ---
 RANGE del bot grid: usar BB 2H como referencia principal (BB 1H como estructura fina). SL: soporte/resistencia estructural (BB 4H o swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reducir capital y/o leverage (pérdida real proyectada 5-8%).
+${has30m ? "MODO SCALP 30M (trade máx 2-3h, profit chico): RANGE con BB 30M/1H. SL estructural (swing 30M/1H o BB) ± 0.5-1×ATR(30m). TP realista: 0.5-1.5×ATR(30m). Ratio TP/SL ≥ 1." : ""}
 `;
   return output;
 }
@@ -232,6 +252,58 @@ function evaluateScreener(pairIndicators, ticker, direction, isMajor = false) {
   }
   const atrMin = isMajor ? 0.40 : 1.2;
   if (atr1 != null && atr1 < atrMin) add(`ATR(1h) ${atr1.toFixed(2)}% < ${atrMin.toFixed(2)}%`);
+
+  return problems.length ? problems : null;
+}
+
+function evaluateScreener30m(pairIndicators, ticker, direction, isMajor = false) {
+  const dir = (direction || "").toUpperCase();
+  if (!["LONG", "SHORT", "NEUTRAL"].includes(dir)) return null;
+
+  const problems = [];
+  const add = (msg) => problems.push(msg);
+
+  const rsi30 = pairIndicators.rsi?.["30m"];
+  const rsi1 = pairIndicators.rsi?.["1h"];
+  const adx30Obj = pairIndicators.adx?.["30m"];
+  const adx30 = adx30Obj?.adx;
+  const diPlus30 = adx30Obj?.diPlus;
+  const diMinus30 = adx30Obj?.diMinus;
+  const atr30 = pairIndicators.atr?.["30m_pct"] != null ? parseFloat(pairIndicators.atr["30m_pct"]) : null;
+  const volUsd = ticker?.quoteVolume != null ? Number(ticker.quoteVolume) : null;
+
+  if (volUsd != null && !isNaN(volUsd) && volUsd <= 200000) {
+    add(`Volumen 24h ${Math.round(volUsd).toLocaleString("en-US")} USDT ≤ 200K`);
+  }
+
+  if (dir === "NEUTRAL") {
+    if (adx30 != null && adx30 >= 15) add(`ADX(30m) ${adx30} ≥ 15 (no lateral)`);
+    if (rsi30 != null && (rsi30 < 45 || rsi30 > 55)) add(`RSI(30m) ${rsi30.toFixed(1)} fuera de 45-55`);
+    const atrMinN = isMajor ? 0.20 : 1.2;
+    if (atr30 != null && atr30 < atrMinN) add(`ATR(30m) ${atr30.toFixed(2)}% < ${atrMinN.toFixed(2)}% (Neutral)`);
+    return problems.length ? problems : null;
+  }
+
+  if (rsi30 != null) {
+    if (dir === "LONG" && (rsi30 < 52 || rsi30 > 72)) add(`RSI(30m) ${rsi30.toFixed(1)} fuera de 52-72`);
+    if (dir === "SHORT" && (rsi30 < 28 || rsi30 > 48)) add(`RSI(30m) ${rsi30.toFixed(1)} fuera de 28-48`);
+  }
+  if (rsi1 != null) {
+    if (dir === "LONG" && rsi1 < 45) add(`RSI(1h) ${rsi1.toFixed(1)} < 45 (contexto 1H bajista fuerte)`);
+    if (dir === "SHORT" && rsi1 > 55) add(`RSI(1h) ${rsi1.toFixed(1)} > 55 (contexto 1H alcista fuerte)`);
+  }
+  if (adx30 != null) {
+    if (adx30 < 18) add(`ADX(30m) ${adx30} < 18 (sin momentum)`);
+    if (adx30 > 50) add(`ADX(30m) ${adx30} > 50 (movimiento agotado)`);
+    if (dir === "LONG" && diPlus30 != null && diMinus30 != null && diPlus30 <= diMinus30) {
+      add(`DI+(30m) ${diPlus30} ≤ DI-(30m) ${diMinus30}`);
+    }
+    if (dir === "SHORT" && diPlus30 != null && diMinus30 != null && diMinus30 <= diPlus30) {
+      add(`DI-(30m) ${diMinus30} ≤ DI+(30m) ${diPlus30}`);
+    }
+  }
+  const atrMin = isMajor ? 0.25 : 0.8;
+  if (atr30 != null && atr30 < atrMin) add(`ATR(30m) ${atr30.toFixed(2)}% < ${atrMin.toFixed(2)}%`);
 
   return problems.length ? problems : null;
 }
@@ -420,6 +492,28 @@ function intervalToPionex(tf) {
   return PIONEX_INTERVALS[tf] || "60M";
 }
 
+function aggregateKlines(ohlcv, factor) {
+  if (!ohlcv?.length || factor <= 1) return ohlcv || [];
+  const baseMs = ohlcv.length > 1 ? ohlcv[1][0] - ohlcv[0][0] : 3600000;
+  const bucketMs = baseMs * factor;
+  const out = [];
+  let cur = null;
+  for (const c of ohlcv) {
+    const bucket = Math.floor(c[0] / bucketMs) * bucketMs;
+    if (!cur || cur[0] !== bucket) {
+      if (cur) out.push(cur);
+      cur = [bucket, c[1], c[2], c[3], c[4], c[5]];
+    } else {
+      cur[2] = Math.max(cur[2], c[2]);
+      cur[3] = Math.min(cur[3], c[3]);
+      cur[4] = c[4];
+      cur[5] += c[5];
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 async function fetchPionexKlines(symbol, interval, limit = 100) {
   const pionexSymbol = symbolToPionex(symbol);
   const pionexInterval = intervalToPionex(interval);
@@ -527,7 +621,12 @@ async function fetchFromPionex(symbol, timeframes = ["1h", "2h", "4h"]) {
       results[tf] = ohlcv;
     } catch (e) {
       console.log(`⚠️ Pionex klines falló ${symbol} ${tf}: ${e.message}`);
-      results[tf] = [];
+      if (tf === "2h" && results["1h"]?.length > 0) {
+        results[tf] = aggregateKlines(results["1h"], 2);
+        console.log(`🔁 Pionex ${symbol}: 2h agregado desde 1h (${results[tf].length} velas)`);
+      } else {
+        results[tf] = [];
+      }
     }
   }
 
@@ -634,6 +733,51 @@ RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
 • Range: $XX.XXX - $XX.XXX
 • Grids: XX
 • Leverage: Xx
+
+LONG: SL inferior, TP superior. SHORT: SL superior, TP inferior. NEUTRAL: Range donde opera, SL fuera del range en ambas direcciones.`
+    }
+  ]);
+}
+
+async function analyzeWithAI30m(indicatorsText, ticker = null) {
+  const tickerText = formatTickerText(ticker, "DATOS 24H BTC");
+  return tryWithFallback([
+    {
+      role: "user",
+      content: `Eres un trader profesional de criptomonedas especializado en SCALPING con bots grid de CORTA DURACIÓN (máximo 2-3 horas por trade). Analiza los siguientes datos de BTCUSDT.
+
+DATOS DEL MERCADO (30M recién cerrada + contexto 1H/2H/4H):
+${indicatorsText}
+${tickerText}
+PROTOCOLO DE TRADING (referencia general):
+${protocolo}
+
+CONTEXTO DEL FLUJO:
+- Este análisis se dispara al minuto 30 de cada hora con la vela de 30M recién cerrada.
+- Objetivo: abrir un bot grid de corta duración (máx 2-3 horas) que capture un profit chico y salga.
+
+INSTRUCCIONES:
+1. Prioriza los indicadores de 30M para el timing de entrada; usa 1H y 4H solo como contexto de tendencia mayor.
+2. Si la señal va CONTRA la tendencia de 4H (ej: SHORT con RSI(4h) alto en tendencia alcista, o LONG en caída), solo la aceptas si el momentum 30M está claramente girado a favor (ADX(30m) ≥ 18 con DI a favor, RSI(30m) cruzando la zona de entrada) y en ese caso reduce leverage y objetivo. Señala explícitamente que es contra-tendencia.
+3. TP chico y realista: entre 0.5× y 1.5× ATR(30m) desde el entry. SL estructural (swing 30M/1H o banda BB) ± 0.5-1× ATR(30m). La relación TP/SL debe ser ≥ 1; si no lo es, NO TRADE.
+4. Range del bot grid: BB 30M como referencia principal (BB 1H si la de 30M es demasiado estrecha). Grids pocos (4-8).
+5. Leverage máximo 3x para este flujo aunque el par permita más; debe ser ≤ al MAX LEVERAGE del par mostrado en los datos.
+6. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13).
+7. Determina: BOT LONG, BOT SHORT, BOT NEUTRAL o NO TRADE
+8. Si es NO TRADE: responde solo "❌ NO TRADE" y el motivo en 1 línea.
+9. Crowding: LONG exige FUNDING RATE ≤ 0.05%; SHORT exige FUNDING RATE ≥ -0.05%. Funding extremo → baja convicción o NO TRADE.
+10. NO muestres capital ni cálculos intermedios.
+
+RESPONDE EN ESPAÑOL. Máximo 12 líneas. Formato EXACTO:
+
+⏱️ BOT 30M LONG / ⏱️ BOT 30M SHORT / ⏱️ BOT 30M NEUTRAL
+• Entry: $XX.XXX
+• SL: $XX.XXX
+• TP: $XX.XXX
+• Range: $XX.XXX - $XX.XXX
+• Grids: XX
+• Leverage: Xx
+• Duración estimada: Xh
 
 LONG: SL inferior, TP superior. SHORT: SL superior, TP inferior. NEUTRAL: Range donde opera, SL fuera del range en ambas direcciones.`
     }
@@ -1223,10 +1367,72 @@ async function runHourlyAnalysis() {
   }
 }
 
+function extractDirection30m(content) {
+  const m = (content || "").match(/BOT\s*30M\s*(LONG|SHORT|NEUTRAL)/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+async function runHalfHourlyAnalysis() {
+  if (botStatus === "Abierto" || !chatId) {
+    console.log(`⏭️ Análisis 30m saltado: status="${botStatus}", chatId="${chatId}"`);
+    return;
+  }
+
+  console.log("🔄 Iniciando análisis 30m de BTCUSDT (fuente: Pionex)...");
+  try {
+    const symbol = symbolForPair("BTC");
+    const marketData = await fetchFromPionex(symbol, ["30m", "1h", "2h", "4h"]);
+    console.log("✅ Datos OHLCV de Pionex obtenidos");
+
+    const indicators = getLatestIndicators(marketData["1h"], marketData["4h"], marketData["2h"], marketData["30m"]);
+    const indicatorsText = formatIndicatorsText(indicators) + "\n" + formatLeverageText(marketData._leverage) + "\n" + formatFundingText(marketData._funding);
+
+    const ticker = marketData._ticker;
+    const isMajor = MAJOR_COINS.includes("BTC");
+    const longProblems = evaluateScreener30m(indicators, ticker, "LONG", isMajor);
+    const shortProblems = evaluateScreener30m(indicators, ticker, "SHORT", isMajor);
+    const neutralProblems = evaluateScreener30m(indicators, ticker, "NEUTRAL", isMajor);
+
+    if (longProblems && shortProblems && neutralProblems) {
+      console.log("🚫 Screener 30m bloqueó todas las direcciones");
+      await sendSafeTelegram(
+        `⏱️ ANÁLISIS 30M BTCUSDT\n\n❌ NO TRADE (Screener 30m)\n` +
+        `• LONG → ${longProblems.join("; ")}\n` +
+        `• SHORT → ${shortProblems.join("; ")}\n` +
+        `• NEUTRAL → ${neutralProblems.join("; ")}`
+      );
+      console.log("✅ Análisis 30m completado (NO TRADE por screener).");
+      return;
+    }
+
+    console.log("🧠 Enviando a OpenRouter para análisis 30m...");
+    const analysis = await analyzeWithAI30m(indicatorsText, ticker);
+    const direction = extractDirection30m(analysis);
+    const validated = validateAnalysisOutput(analysis, direction, marketData._leverage?.max ?? null);
+
+    console.log("📤 Enviando resultado a Telegram...");
+    await sendSafeTelegram(`⏱️ ANÁLISIS 30M BTCUSDT\n\n${validated}`);
+    console.log("✅ Análisis 30m completado y enviado.");
+  } catch (error) {
+    console.error("❌ Error en análisis 30m:", error.message);
+    if (error.response) {
+      console.error("Detalle:", JSON.stringify(error.response.data, null, 2).slice(0, 500));
+    }
+    await sendSafeTelegram(`⚠️ Error en el análisis 30m: ${error.message}`);
+  }
+}
+
 cron.schedule("0 * * * *", () => {
   console.log("⏰ Cron ejecutándose...");
   runHourlyAnalysis().catch((err) => {
     console.error("❌ Error en cron de análisis:", err.message);
+  });
+});
+
+cron.schedule("30 * * * *", () => {
+  console.log("⏰ Cron 30m ejecutándose...");
+  runHalfHourlyAnalysis().catch((err) => {
+    console.error("❌ Error en cron de análisis 30m:", err.message);
   });
 });
 

@@ -36,7 +36,8 @@ OPENROUTER_API_KEY=...
 - Pares en base BTC soportados: `ADA/BTC`, `ORDI/BTC`, `PAXG/BTC`, `LINK/BTC`, `XRP/BTC`, `SOL/BTC`, `ETH/BTC`, `BNB/BTC`, `DOGE/BTC`, `SUI/BTC` (y cualquier par cruzado contra BTC).
 - 601+ pares perpetuos disponibles
 - Función de conversión: `symbolToPionex()` en `index.js` (reemplaza `/` → `_`, `:USDT` o `:BTC` → `_PERP`)
-- Klines endpoint: `GET /api/v1/market/klines?symbol=XXX_PERP&interval=60M|120M|4H&limit=100` (1h, 2h, 4h)
+- Klines endpoint: `GET /api/v1/market/klines?symbol=XXX_PERP&interval=60M|30M|4H&limit=100` (1h, 30m, 4h)
+- **`120M` ya NO es aceptado por la API** (`MARKET_PARAMETER_ERROR`): el timeframe 2h se obtiene agregando 2 velas de 1h con `aggregateKlines()` dentro de `fetchFromPionex` (fallback automático si falla el fetch directo)
 - Tickers endpoint: `GET /api/v1/market/tickers?symbol=XXX_PERP`
 
 ### Formato de conversión de símbolo
@@ -83,12 +84,27 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - **Alineación 4H:** RSI(4h) **≥50** para LONG y **≤50** para SHORT (Sección 13)
 - **Funding Rate:** **≤0.05%** para LONG y **≥-0.05%** para SHORT (evita crowding/hacinamiento). Pionex `GET /api/v1/market/fundingRates?symbol=XXX_PERP`, Bitget `GET /api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES&symbol=XXXUSDT` → `%`
 
+## Análisis 30m automático (BTC) — scalping de corta duración
+
+- Cron job al minuto 30 de cada hora (`30 * * * *`): corre con la vela de 30M recién cerrada (`runHalfHourlyAnalysis`).
+- Fetch Pionex con `["30m", "1h", "2h", "4h"]`; los mensajes a Telegram se prefijan con `⏱️ ANÁLISIS 30M BTCUSDT`.
+- Objetivo: bots grid de corta duración (máx 2–3 horas) con profit chico. Prompt dedicado `analyzeWithAI30m`: TP 0.5–1.5×ATR(30m), SL estructural ± 0.5–1×ATR(30m), range con BB 30M/1H, leverage máx **3x**.
+- Gate duro previo con `evaluateScreener30m` (si las 3 direcciones fallan → envía `❌ NO TRADE (Screener 30m)` sin gastar LLM):
+  - Vol 24h **>200K USD** (las tres direcciones)
+  - ATR(30m): majors **>0.25%** (Long/Short) y **>0.20%** (Neutral); altcoins **>0.8%** / **>1.2%**
+  - LONG: RSI(30m) **52–72**, RSI(1h) **≥45**, ADX(30m) **18–50** con **DI+ > DI−**
+  - SHORT: RSI(30m) **28–48**, RSI(1h) **≤55**, ADX(30m) **18–50** con **DI− > DI+**
+  - NEUTRAL: ADX(30m) **<15**, RSI(30m) **45–55**
+  - No filtra por cambio 24h ni alineación estricta de RSI 4H (permite contra-tendencia; la IA debe bajar convicción en ese caso)
+- Crowding por funding se evalúa en el prompt (no en el gate), igual que en el flujo horario.
+
 ## Gate duro del Screener (`evaluateScreener`)
 
 - `evaluateScreener(pairIndicators, ticker, direction, isMajor)` computa **determinísticamente** los filtros de la Sección 13 (vol 24h >200K, ATR 1h, ADX 1h 25–35, RSI 1h, RSI 4h alineado, ADX 4h 15–25, change 24h, y NEUTRAL: ADX <18, RSI 45–55, change −3/3%).
 - Se aplica en `analyzeBotOpportunity`, `compareBotVsFutures` y `analyzePairWithSource` **antes de llamar a la IA**: si falla → responde `❌ NO TRADE` con el motivo, sin gastar el LLM.
 - `MAJOR_COINS` (BTC, ETH, BNB, SOL, ...) usa umbral ATR 0.40%/0.30%; el resto altcoins 1.2%/1.8%.
 - `validateAnalysisOutput(content, direction, maxLeverage)` parsea la respuesta de la IA y agrega warning `⚠️ VALIDACIÓN` si SL está del lado incorrecto o leverage > 4x / > max del par.
+- En el flujo 30m, `extractDirection30m(analysis)` extrae la dirección del prefijo `BOT 30M LONG|SHORT|NEUTRAL` antes de validar.
 
 ## Timeframes de análisis (1h + 2h + 4h)
 
