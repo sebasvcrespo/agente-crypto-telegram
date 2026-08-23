@@ -37,7 +37,7 @@ OPENROUTER_API_KEY=...
 - 601+ pares perpetuos disponibles
 - Función de conversión: `symbolToPionex()` en `index.js` (reemplaza `/` → `_`, `:USDT` o `:BTC` → `_PERP`)
 - Klines endpoint: `GET /api/v1/market/klines?symbol=XXX_PERP&interval=60M|30M|4H&limit=100` (1h, 30m, 4h)
-- **`120M` ya NO es aceptado por la API** (`MARKET_PARAMETER_ERROR`): el timeframe 2h se obtiene agregando 2 velas de 1h con `aggregateKlines()` dentro de `fetchFromPionex` (fallback automático si falla el fetch directo)
+- **`120M` ya NO se solicita a la API** (`MARKET_PARAMETER_ERROR`): la vela 2h SIEMPRE se sintetiza agregando 2 velas de 1h con `aggregateKlines()`, tanto en `fetchFromPionex` como en las ramas Bitget/auto de `fetchMarketDataForPair` (el fetch filtra "2h" del array y la genera al final)
 - Tickers endpoint: `GET /api/v1/market/tickers?symbol=XXX_PERP`
 
 ### Formato de conversión de símbolo
@@ -105,7 +105,8 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - Iteración secuencial con `sleep(1200)` por par; fetch `["30m","1h","2h","4h"]` + indicadores 30m.
 - Gate: `evaluateScreener30m` en las 3 direcciones (majors según `MAJOR_COINS`; ORDI/SUI/PAXG caen como alts). Como máximo una dirección puede pasar por diseño (rangos de RSI/ADX mutuamente excluyentes).
 - **Conversión de volumen:** para pares base BTC el `quoteVolume` viene en BTC → `tickerWithUsdVolume(ticker, true, btcUsd)` lo multiplica por el precio BTC/USDT (`getBtcUsdPrice()`, Pionex con fallback ccxt) antes del screener. Sin esto, TODOS los pares base BTC quedan bloqueados por el filtro de 200K. Los call sites de `evaluateScreener` en `analyzeBotOpportunity`, `compareBotVsFutures` y `analyzePairWithSource` aplican la misma conversión.
-- Ranking de los que pasan: `Score = |SellBuyRate(30m)| × (ADX(30m)/20)`; solo el top 1 va a la IA (`analyzeWithAI30m` con `symbolLabel` del par).
+- Ranking de los que pasan: `Score = |SellBuyRate(30m) normalizado| × (ADX(30m)/20)`; el SBR crudo es volumen-pesado y no comparable entre pares → `indicators.sellBuyRate30mNorm` lo divide por el volumen medio de 34 velas de 30m. Solo el top 1 va a la IA (`analyzeWithAI30m` con `symbolLabel` del par).
+- El ticker pasado a `analyzeWithAI30m` va convertido a USD (`tickerWithUsdVolume`) para que la IA vea el volumen 24h en dólares, no en BTC.
 - Salida: un único mensaje consolidado `⏱️ ESCANEO MULTI-PAR (30M)` con mejor oportunidad (+config IA), otros que pasaron (dirección+score), NO TRADE con motivo L/S y errores de fetch. Si ninguno pasa → mensaje compacto sin gastar LLM.
 
 ## Gate duro del Screener (`evaluateScreener`)

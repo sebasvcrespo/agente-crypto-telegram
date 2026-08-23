@@ -362,9 +362,13 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], s
     source = "pionex";
   }
 
+  const needs2h = timeframes.includes("2h");
+  const tfs = timeframes.filter(tf => tf !== "2h");
+
   // Si source es "pionex" → solo Pionex
   if (source === "pionex") {
-    const data = await fetchFromPionex(symbol, timeframes);
+    const data = await fetchFromPionex(symbol, tfs);
+    if (needs2h) data["2h"] = aggregateKlines(data["1h"], 2);
     return { data, exchange: "pionex" };
   }
 
@@ -372,7 +376,7 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], s
   if (source === "bitget") {
     const results = {};
     let lastError = null;
-    for (const tf of timeframes) {
+    for (const tf of tfs) {
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           const ohlcv = await exchange.fetchOHLCV(symbol, tf, undefined, 100);
@@ -410,6 +414,7 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], s
     } catch (e) {
       results._funding = null;
     }
+    if (needs2h) results["2h"] = aggregateKlines(results["1h"], 2);
     return { data: results, exchange: "bitget" };
   }
 
@@ -417,7 +422,7 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], s
   let bitgetError = null;
   const results = {};
 
-  for (const tf of timeframes) {
+  for (const tf of tfs) {
     let ohlcv = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -444,12 +449,15 @@ async function fetchMarketDataForPair(symbol, timeframes = ["1h", "2h", "4h"], s
     console.log(`⚠️ Bitget no disponible para ${symbol}: ${bitgetError.message}`);
     console.log(`🔄 Intentando fallback a Pionex...`);
     try {
-      const pionexData = await fetchFromPionex(symbol, timeframes);
+      const pionexData = await fetchFromPionex(symbol, tfs);
+      if (needs2h) pionexData["2h"] = aggregateKlines(pionexData["1h"], 2);
       return { data: pionexData, exchange: "pionex" };
     } catch (e) {
       throw new Error(`Par ${symbol} no disponible en ningún exchange`);
     }
   }
+
+  if (needs2h) results["2h"] = aggregateKlines(results["1h"], 2);
 
   try {
     const ticker = await exchange.fetchTicker(symbol);
@@ -632,21 +640,23 @@ async function fetchBitgetFunding(symbol) {
 }
 
 async function fetchFromPionex(symbol, timeframes = ["1h", "2h", "4h"]) {
+  const needs2h = timeframes.includes("2h");
+  const tfs = timeframes.filter(tf => tf !== "2h");
   const results = {};
-  for (const tf of timeframes) {
+  for (const tf of tfs) {
     try {
       const ohlcv = await fetchPionexKlines(symbol, tf, 100);
       console.log(`📊 Pionex ${symbol}: ${tf}=${ohlcv.length} velas`);
       results[tf] = ohlcv;
     } catch (e) {
       console.log(`⚠️ Pionex klines falló ${symbol} ${tf}: ${e.message}`);
-      if (tf === "2h" && results["1h"]?.length > 0) {
-        results[tf] = aggregateKlines(results["1h"], 2);
-        console.log(`🔁 Pionex ${symbol}: 2h agregado desde 1h (${results[tf].length} velas)`);
-      } else {
-        results[tf] = [];
-      }
+      results[tf] = [];
     }
+  }
+
+  if (needs2h && results["1h"]?.length > 0) {
+    results["2h"] = aggregateKlines(results["1h"], 2);
+    console.log(`🔁 Pionex ${symbol}: 2h sintetizada desde 1h (${results["2h"].length} velas)`);
   }
 
   try {
@@ -828,7 +838,8 @@ async function analyzePair(base, timeframes = ["1h", "2h", "4h"]) {
   const btcText = formatIndicatorsText(btcIndicators, false);
   const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(pairResult.data._leverage) + "\n" + formatFundingText(pairResult.data._funding);
   const btcTickerText = formatTickerText(btcResult.data._ticker, "DATOS 24H BTC", false);
-  const pairTickerText = formatTickerText(pairResult.data._ticker, "DATOS 24H " + pairResult.symbol, isBtcBase);
+  const btcUsdForPair = isBtcBase ? await getBtcUsdPrice() : null;
+  const pairTickerText = formatTickerText(tickerWithUsdVolume(pairResult.data._ticker, isBtcBase, btcUsdForPair), "DATOS 24H " + pairResult.symbol + (isBtcBase ? " [volumen 24h en USD]" : ""), false);
 
   let content = "";
   if (isBtcBase) {
@@ -1089,7 +1100,8 @@ async function analyzeBotOpportunity(symbol, direction) {
   const isBtcBase = sym.endsWith(":BTC");
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"], data["2h"]);
   const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(data._leverage) + "\n" + formatFundingText(data._funding);
-  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym, isBtcBase);
+  const btcUsd = isBtcBase ? await getBtcUsdPrice() : null;
+  const tickerText = formatTickerText(tickerWithUsdVolume(data._ticker, isBtcBase, btcUsd), "DATOS 24H " + sym + (isBtcBase ? " [volumen 24h en USD]" : ""), false);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
@@ -1097,7 +1109,6 @@ async function analyzeBotOpportunity(symbol, direction) {
   const currencyUnit = isBtcBase ? " BTC" : "";
 
   const isMajor = isBtcBase || MAJOR_COINS.includes(sym.split("/")[0].toUpperCase());
-  const btcUsd = isBtcBase ? await getBtcUsdPrice() : null;
   const screenerProblems = evaluateScreener(pairIndicators, tickerWithUsdVolume(data._ticker, isBtcBase, btcUsd), directionLabel, isMajor);
   if (screenerProblems) {
     return `❌ NO TRADE\n\nNo cumple los filtros del Screener (Sección 13 del protocolo) para BOT ${directionLabel}:\n• ${screenerProblems.join("\n• ")}`;
@@ -1144,13 +1155,13 @@ async function compareBotVsFutures(symbol, direction) {
 
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"], data["2h"]);
   const pairText = formatIndicatorsText(pairIndicators) + "\n" + formatLeverageText(data._leverage) + "\n" + formatFundingText(data._funding);
-  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
 
   const isBtcBase = sym.endsWith(":BTC");
   const btcUsd = isBtcBase ? await getBtcUsdPrice() : null;
+  const tickerText = formatTickerText(tickerWithUsdVolume(data._ticker, isBtcBase, btcUsd), "DATOS 24H " + sym + (isBtcBase ? " [volumen 24h en USD]" : ""), false);
   const isMajor = MAJOR_COINS.includes(sym.split("/")[0].toUpperCase());
   const screenerProblems = evaluateScreener(pairIndicators, tickerWithUsdVolume(data._ticker, isBtcBase, btcUsd), directionLabel, isMajor);
   if (screenerProblems) {
@@ -1210,7 +1221,6 @@ async function analyzePairWithSource(base, source, direction) {
   const isBtcBase = sym.endsWith(":BTC");
   const pairIndicators = getLatestIndicators(data["1h"], data["4h"], data["2h"]);
   const pairText = formatIndicatorsText(pairIndicators, isBtcBase) + "\n" + formatLeverageText(data._leverage) + "\n" + formatFundingText(data._funding);
-  const tickerText = formatTickerText(data._ticker, "DATOS 24H " + sym, isBtcBase);
 
   const isNeutral = direction.toUpperCase() === "NEUTRAL";
   const directionLabel = isNeutral ? "NEUTRAL" : direction.toUpperCase();
@@ -1218,6 +1228,7 @@ async function analyzePairWithSource(base, source, direction) {
 
   const isMajor = isBtcBase || MAJOR_COINS.includes(sym.split("/")[0].toUpperCase());
   const btcUsd = isBtcBase ? await getBtcUsdPrice() : null;
+  const tickerText = formatTickerText(tickerWithUsdVolume(data._ticker, isBtcBase, btcUsd), "DATOS 24H " + sym + (isBtcBase ? " [volumen 24h en USD]" : ""), false);
   const screenerProblems = evaluateScreener(pairIndicators, tickerWithUsdVolume(data._ticker, isBtcBase, btcUsd), directionLabel, isMajor);
   if (screenerProblems) {
     return `❌ NO TRADE\n\nNo cumple los filtros del Screener (Sección 13 del protocolo) para BOT ${directionLabel} (${sourceLabel}):\n• ${screenerProblems.join("\n• ")}`;
@@ -1497,7 +1508,7 @@ async function runMultiPairScan() {
 
       if (candidates.length) {
         const adx30 = indicators.adx?.["30m"]?.adx ?? 0;
-        const sbr = indicators.sellBuyRate30m ?? indicators.sellBuyRate ?? 0;
+        const sbr = indicators.sellBuyRate30mNorm ?? 0;
         const score = Math.abs(sbr) * (adx30 / 20);
         passed.push({ base, symbol, indicators, marketData, ticker, direction: candidates[0], score });
         console.log(`✅ ${base}: pasa screener (${candidates.join("/")}) score=${score.toFixed(2)}`);
@@ -1525,7 +1536,7 @@ async function runMultiPairScan() {
       const others = passed.slice(1);
 
       const indicatorsText = formatIndicatorsText(best.indicators, true) + "\n" + formatLeverageText(best.marketData._leverage) + "\n" + formatFundingText(best.marketData._funding);
-      const analysis = await analyzeWithAI30m(indicatorsText, best.ticker, pairLabel(best.symbol));
+      const analysis = await analyzeWithAI30m(indicatorsText, tickerWithUsdVolume(best.ticker, true, btcUsd), pairLabel(best.symbol));
       const validated = validateAnalysisOutput(analysis, extractDirection30m(analysis), best.marketData._leverage?.max ?? null);
 
       msg = `⏱️ ESCANEO MULTI-PAR (30M)\n\n🏆 MEJOR OPORTUNIDAD: ${pairLabel(best.symbol)} [screener: ${best.direction}, Score: ${best.score.toFixed(2)}]\n\n${validated.trim()}`;

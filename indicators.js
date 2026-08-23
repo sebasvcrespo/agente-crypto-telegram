@@ -183,6 +183,8 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null, ohlcv30m =
   const adx30m = has30m ? calculateADX(h30, l30, c30, 14) : null;
   const atr30m = has30m ? calculateATR(h30, l30, c30, 14) : null;
   const sbr30m = has30m ? calculateSellBuyRate(o30, h30, l30, c30, v30, 34) : null;
+  const v30avg = has30m ? v30.slice(-34).reduce((a, b) => a + b, 0) / Math.min(34, v30.length) : null;
+  const sbr30mNorm = has30m && v30avg ? sbr30m / v30avg : null;
 
   return {
     precio: lastC1,
@@ -203,7 +205,8 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null, ohlcv30m =
       "30m_pct": atr30m ? `${(atr30m / lastC1 * 100).toFixed(2)}%` : null
     },
     sellBuyRate: sbr,
-    sellBuyRate30m: sbr30m
+    sellBuyRate30m: sbr30m,
+    sellBuyRate30mNorm: sbr30mNorm
   };
 }
 
