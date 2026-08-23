@@ -1474,8 +1474,8 @@ function pairLabel(symbol) {
   return symbol.replace(/:(USDT|BTC)$/, "");
 }
 
-async function runMultiPairScan() {
-  if (botStatus === "Cerrado" || !chatId) {
+async function runMultiPairScan(force = false) {
+  if (!force && (botStatus === "Cerrado" || !chatId)) {
     console.log(`⏭️ Escaneo multi-par saltado: status="${botStatus}", chatId="${chatId}"`);
     return;
   }
@@ -1598,7 +1598,8 @@ bot.command("start", async (ctx) => {
       "• `/PAR` — Analiza cualquier par con contexto BTC (ej: `/ETH`, `/BTC`)\n" +
       "• `/PAR TF` — Todos los indicadores en una temporalidad (ej: `/ETH 1h`, `/ADA 4h`)\n" +
       "• `Abierto` — Activa las alertas automáticas (BTC 1H, BTC 30M y escaneo multi-par)\n" +
-      "• `Cerrado` — Pausa las alertas automáticas\n\n" +
+      "• `Cerrado` — Pausa las alertas automáticas\n" +
+      "• `Escaneo` — Escaneo multi-par manual inmediato\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
       "• `/PAR FUENTE DIRECCION` — Bot+Futuros con fuente (ej: `/ETH Pionex Long`, `/BTC Bitget Short`)\n" +
@@ -1646,7 +1647,8 @@ bot.command("help", async (ctx) => {
     "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros\n\n" +
     "*Alertas automáticas:*\n" +
     "• `Abierto` — Activa (BTC 1H, BTC 30M, multi-par)\n" +
-    "• `Cerrado` — Pausa\n\n" +
+    "• `Cerrado` — Pausa\n" +
+    "• `Escaneo` — Escaneo multi-par manual inmediato\n\n" +
     "*Fuentes:* `Bitget`, `Pionex`\n" +
     "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
     { parse_mode: "Markdown" }
@@ -1725,6 +1727,19 @@ bot.on("message:text", async (ctx) => {
       setBotStatus("Cerrado");
       await ctx.reply("🔒 *Modo Cerrado* — Alertas pausadas.\n\nNo recibirás más análisis automáticos hasta que escribas *Abierto*.", { parse_mode: "Markdown" });
       console.log("🔒 Bot status cambiado a: Cerrado");
+      return;
+    }
+
+    if (text === "escaneo") {
+      if (!chatId) {
+        await ctx.reply("⚠️ Aún no tengo registrado tu chat. Escribí *Abierto* primero.", { parse_mode: "Markdown" });
+        return;
+      }
+      await ctx.reply("⏱️ Ejecutando escaneo multi-par manual (10 pares base BTC)...\n\nToma ~20 segundos.");
+      runMultiPairScan(true).catch(async (err) => {
+        console.error("❌ Error en escaneo manual:", err.message);
+        await ctx.reply(`⚠️ Error en escaneo manual: ${err.message}`);
+      });
       return;
     }
 
