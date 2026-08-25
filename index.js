@@ -72,6 +72,12 @@ function setBotStatus(status) {
 
 const protocolo = fs.readFileSync(path.join(__dirname, "protocolo.txt"), "utf-8");
 
+function extraReglasRange(isBtcBase) {
+  const base = "RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.";
+  if (!isBtcBase) return base;
+  return "PERFIL PAR BTC (trade 3-4 horas): RANGE del bot grid con BB 2H como referencia principal; si la BB 2H queda corta para contener TP/SL, usar la BB 4H como temporalidad superior (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 2×ATR(1h). TP = estructura ± 3×ATR(1h). Relación riesgo/beneficio 1:1.5 obligatoria; si no es posible respetarla con estructura real, NO TRADE. Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.";
+}
+
 function decimalsForPrice(price, isBtcBase = false) {
   if (isBtcBase) return 8;
   if (price < 0.001) return 8;
@@ -152,8 +158,12 @@ Valor: ${sbr}
 ${sbr !== "N/A" ? (data.sellBuyRate > 0 ? "→ Presión COMPRADORA dominante" : "→ Presión VENDEDORA dominante") : ""}
 
 --- REFERENCIA RANGE/SL ---
-RANGE del bot grid: usar BB 2H como referencia principal (BB 1H como estructura fina). SL: soporte/resistencia estructural (BB 4H o swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reducir capital y/o leverage (pérdida real proyectada 5-8%).
-${has30m ? "MODO SCALP 30M (trade máx 2-3h, profit chico): RANGE con BB 30M/1H. SL estructural (swing 30M/1H o BB) ± 0.5-1×ATR(30m). TP realista: 0.5-1.5×ATR(30m). Ratio TP/SL ≥ 1." : ""}
+${isBtcBase
+  ? "PERFIL PAR BTC (trade 3-4h): RANGE del bot grid con BB 2H como referencia principal; si la BB queda corta para contener TP/SL, usar BB 4H (temporalidad superior). SL: soporte/resistencia estructural (BB 4H o swing) ± 2×ATR(1h). TP: ±3×ATR(1h). Ratio riesgo/beneficio 1:1.5. Si el SL implica pérdida >8-10% a 1x, reducir capital y/o leverage (pérdida real proyectada 5-8%)."
+  : "RANGE del bot grid: usar BB 2H como referencia principal (BB 1H como estructura fina). SL: soporte/resistencia estructural (BB 4H o swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reducir capital y/o leverage (pérdida real proyectada 5-8%)."}
+${has30m ? (isBtcBase
+  ? "MODO SCALP 30M PAR BTC (trade máx 3-4h): RANGE con BB 1H (BB 2H si queda corta). SL estructural (swing 30M/1H o BB) ± 2×ATR(30m). TP: 3×ATR(30m). Ratio riesgo/beneficio 1:1.5 obligatorio."
+  : "MODO SCALP 30M (trade máx 2-3h, profit chico): RANGE con BB 30M/1H. SL estructural (swing 30M/1H o BB) ± 0.5-1×ATR(30m). TP realista: 0.5-1.5×ATR(30m). Ratio TP/SL ≥ 1.") : ""}
 `;
   return output;
 }
@@ -768,12 +778,19 @@ LONG: SL inferior, TP superior. SHORT: SL superior, TP inferior. NEUTRAL: Range 
   ]);
 }
 
-async function analyzeWithAI30m(indicatorsText, ticker = null, symbolLabel = "BTCUSDT") {
+async function analyzeWithAI30m(indicatorsText, ticker = null, symbolLabel = "BTCUSDT", isBtcBase = false) {
   const tickerText = formatTickerText(ticker, "DATOS 24H " + symbolLabel);
+  const duracion = isBtcBase ? "3-4 horas" : "2-3 horas";
+  const reglaTpsl = isBtcBase
+    ? "3. MODO PAR BTC (perfil extendido): TP = 3× ATR(30m) desde el entry. SL estructural (swing 30M/1H o banda BB) ± 2× ATR(30m). Relación riesgo/beneficio objetivo 1:1.5 (TP = 1.5× la distancia al SL). Si no es posible respetar ese ratio con estructura real, NO TRADE."
+    : "3. TP chico y realista: entre 0.5× y 1.5× ATR(30m) desde el entry. SL estructural (swing 30M/1H o banda BB) ± 0.5-1× ATR(30m). La relación TP/SL debe ser ≥ 1; si no lo es, NO TRADE.";
+  const reglaRange = isBtcBase
+    ? "4. Range del bot grid: BB 1H como referencia principal; si la BB 30M/1H es demasiado estrecha para contener SL (2×ATR) y TP (3×ATR), usa BB 2H (temporalidad superior). Grids pocos (4-8)."
+    : "4. Range del bot grid: BB 30M como referencia principal (BB 1H si la de 30M es demasiado estrecha). Grids pocos (4-8).";
   return tryWithFallback([
     {
       role: "user",
-      content: `Eres un trader profesional de criptomonedas especializado en SCALPING con bots grid de CORTA DURACIÓN (máximo 2-3 horas por trade). Analiza los siguientes datos de ${symbolLabel}.
+      content: `Eres un trader profesional de criptomonedas especializado en SCALPING con bots grid de CORTA DURACIÓN (máximo ${duracion} por trade). Analiza los siguientes datos de ${symbolLabel}.
 
 DATOS DEL MERCADO (30M recién cerrada + contexto 1H/2H/4H):
 ${indicatorsText}
@@ -783,13 +800,13 @@ ${protocolo}
 
 CONTEXTO DEL FLUJO:
 - Este análisis se dispara al minuto 30 de cada hora con la vela de 30M recién cerrada.
-- Objetivo: abrir un bot grid de corta duración (máx 2-3 horas) que capture un profit chico y salga.
+- Objetivo: abrir un bot grid de corta duración (máx ${duracion}) que capture un profit y salga.
 
 INSTRUCCIONES:
 1. Prioriza los indicadores de 30M para el timing de entrada; usa 1H y 4H solo como contexto de tendencia mayor.
 2. Si la señal va CONTRA la tendencia de 4H (ej: SHORT con RSI(4h) alto en tendencia alcista, o LONG en caída), solo la aceptas si el momentum 30M está claramente girado a favor (ADX(30m) ≥ 18 con DI a favor, RSI(30m) cruzando la zona de entrada) y en ese caso reduce leverage y objetivo. Señala explícitamente que es contra-tendencia.
-3. TP chico y realista: entre 0.5× y 1.5× ATR(30m) desde el entry. SL estructural (swing 30M/1H o banda BB) ± 0.5-1× ATR(30m). La relación TP/SL debe ser ≥ 1; si no lo es, NO TRADE.
-4. Range del bot grid: BB 30M como referencia principal (BB 1H si la de 30M es demasiado estrecha). Grids pocos (4-8).
+${reglaTpsl}
+${reglaRange}
 5. Leverage máximo 3x para este flujo aunque el par permita más; debe ser ≤ al MAX LEVERAGE del par mostrado en los datos.
 6. Si Price Change 24h, Volume (24h) o Volume Change aparecen como "N/A", ignora esos filtros específicos del Screener (Sección 13).
 7. Determina: BOT LONG, BOT SHORT, BOT NEUTRAL o NO TRADE
@@ -863,7 +880,7 @@ INSTRUCCIONES:
 6. Si es LONG o SHORT: calcula SL estructural+ATR, rango, grids, leverage por convicción (máximo 4x según protocolo)
 7. Si es NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones
 8. NO muestres capital ni cálculos intermedios
-9. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+9. EXTRA: ${extraReglasRange(true)}
 10. Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 20 líneas. Formato EXACTO para el análisis del par:
@@ -1131,7 +1148,7 @@ INSTRUCCIONES:
 4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
 5. Si es ${directionLabel}: calcula SL, rango, grids, leverage (máximo 4x según protocolo)
 ${isNeutral ? "6. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones" : ""}
-${isNeutral ? "7. " : "6. "}EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+${isNeutral ? "7. " : "6. "}EXTRA: ${extraReglasRange(isBtcBase)}
 ${isNeutral ? "8. " : "7. "}Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
@@ -1184,7 +1201,7 @@ INSTRUCCIONES:
 3. Analiza los datos y determina los parámetros para FUTUROS (entry, SL, TP1, TP2, leverage)
 4. COMPARA ambas opciones y recomienda cuál es mejor según las condiciones actuales del mercado
 5. Si el mercado está en rango (ADX bajo, RSI ~50), el BOT GRID (especialmente NEUTRAL) suele ser mejor. Si hay tendencia fuerte (ADX alto), los FUTUROS pueden ser mejores.
-6. EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+6. EXTRA: ${extraReglasRange(isBtcBase)}
 7. Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 25 líneas. Formato EXACTO:
@@ -1252,7 +1269,7 @@ INSTRUCCIONES:
 4. Si es NO TRADE: di solo "❌ NO TRADE" y el motivo en 1 línea
 5. Si es ${directionLabel}: calcula SL, rango, grids, leverage (máximo 4x según protocolo)
 ${isNeutral ? "6. Para NEUTRAL: el precio está en rango lateral (ADX bajo, RSI cercano a 50). Calcula un range donde el bot opere comprando en el inferior y vendiendo en el superior, con SL por fuera del range en ambas direcciones" : ""}
-${isNeutral ? "7. " : "6. "}EXTRA: RANGE del bot grid con BB 2H como referencia principal (BB 1H = estructura fina). SL = soporte/resistencia estructural (BB 4H/swing) ± 1-1.5×ATR(1h). Si el SL implica pérdida >8-10% a 1x, reduce capital (Sección 4) y/o leverage (Sección 5): pérdida real proyectada 5-8%. El leverage final (máx 4x por protocolo) debe ser ≤ al MAX LEVERAGE del par mostrado en los datos; si el máximo del par es bajo, dimensiona range/SL/exposición más conservador y señala si no alcanza para la convicción deseada.
+${isNeutral ? "7. " : "6. "}EXTRA: ${extraReglasRange(isBtcBase)}
 ${isNeutral ? "8. " : "7. "}Alineación y crowding: para LONG el RSI(4h) debe estar ≥ 50 (tendencia 4H a favor) y el FUNDING RATE no debe ser positivamente elevado (>0.05% = longs hacinados). Para SHORT el RSI(4h) debe estar ≤ 50 y el funding no debe ser negativamente elevado (<-0.05% = shorts hacinados). Si el funding es extremo, reduce convicción o pasa a NO TRADE.
 
 RESPONDE EN ESPAÑOL. Máximo 15 líneas. Formato EXACTO:
@@ -1536,7 +1553,7 @@ async function runMultiPairScan(force = false) {
       const others = passed.slice(1);
 
       const indicatorsText = formatIndicatorsText(best.indicators, true) + "\n" + formatLeverageText(best.marketData._leverage) + "\n" + formatFundingText(best.marketData._funding);
-      const analysis = await analyzeWithAI30m(indicatorsText, tickerWithUsdVolume(best.ticker, true, btcUsd), pairLabel(best.symbol));
+      const analysis = await analyzeWithAI30m(indicatorsText, tickerWithUsdVolume(best.ticker, true, btcUsd), pairLabel(best.symbol), true);
       const validated = validateAnalysisOutput(analysis, extractDirection30m(analysis), best.marketData._leverage?.max ?? null);
 
       msg = `⏱️ ESCANEO MULTI-PAR (30M)\n\n🏆 MEJOR OPORTUNIDAD: ${pairLabel(best.symbol)} [screener: ${best.direction}, Score: ${best.score.toFixed(2)}]\n\n${validated.trim()}`;
@@ -1613,7 +1630,7 @@ async function runSinglePairScan(rawInput) {
       console.log(`🚫 ${displayLabel}: NO TRADE`);
     } else {
       const indicatorsText = formatIndicatorsText(indicators, parsed.quote === "BTC") + "\n" + formatLeverageText(marketData._leverage) + "\n" + formatFundingText(marketData._funding);
-      const analysis = await analyzeWithAI30m(indicatorsText, tickerForScreener, displayLabel);
+      const analysis = await analyzeWithAI30m(indicatorsText, tickerForScreener, displayLabel, parsed.quote === "BTC");
       const direction = extractDirection30m(analysis);
       const validated = validateAnalysisOutput(analysis, direction, marketData._leverage?.max ?? null);
       msg += `Dirección(es) que pasaron el screener: ${passedDirs.join(", ")}\n\n${validated.trim()}`;

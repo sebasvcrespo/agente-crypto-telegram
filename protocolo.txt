@@ -215,6 +215,28 @@ RSI 1h45-55
 ADX 4h<18
 
 
+14. PERFILES POR TIPO DE PAR — USDT vs BTC (base)
+
+Los parámetros de SL/TP/rango se diferencian según la moneda de cotización del par:
+
+Pares con base USDT (perfil estándar):
+- RANGE del bot grid: BB(20,2) de 2H como referencia principal (BB 1H = estructura fina).
+- SL = soporte/resistencia estructural (BB 4H/swing) ± 1 a 1.5×ATR(1h).
+- Flujo scalp 30M: TP 0.5-1.5×ATR(30m), SL ±0.5-1×ATR(30m), duración máx 2-3 horas.
+- Ratio TP/SL ≥ 1.
+
+Pares con base BTC (perfil extendido, ej: XRP/BTC, ADA/BTC, ORDI/BTC, LINK/BTC, SUI/BTC, DOGE/BTC, SOL/BTC, PAXG/BTC, ETH/BTC, BNB/BTC):
+- Duración objetivo del trade: 3-4 horas (en vez de 2-3).
+- SL = soporte/resistencia estructural (BB 4H/swing) ± 2×ATR — en flujo horario ATR(1h); en flujo 30M, ATR(30m).
+- TP = estructura ± 3×ATR (misma referencia temporal que el SL).
+- Relación riesgo/beneficio obligatoria 1:1.5 (TP = 1.5× la distancia al SL). Si no es posible con estructura real → NO TRADE.
+- RANGE del bot grid: BB 1H como referencia principal en el flujo 30M y BB 2H en flujo horario; si la BB de esa temporalidad queda corta para contener TP/SL (queda superada por ellos), usar la BB de la temporalidad superior (2H o 4H respectivamente).
+- Sección 6 del protocolo se aplica con esta excepción de temporalidad superior para pares BTC.
+
+Todo lo demás (screener, leverage, crowding/funding, position sizing) se mantiene igual para ambos perfiles.
+
+
+
 WHAT REMAINS UNCHANGED FROM ORIGINAL PROTOCOL
 
 

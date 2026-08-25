@@ -97,6 +97,7 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
   - NEUTRAL: ADX(30m) **<15**, RSI(30m) **45–55**
   - No filtra por cambio 24h ni alineación estricta de RSI 4H (permite contra-tendencia; la IA debe bajar convicción en ese caso)
 - Crowding por funding se evalúa en el prompt (no en el gate), igual que en el flujo horario.
+- **Perfil pares base BTC (30m):** `analyzeWithAI30m(..., isBtcBase=true)` aplica perfil extendido: duración máx **3–4h**, SL ±**2×ATR(30m)**, TP **3×ATR(30m)**, **ratio riesgo/beneficio 1:1.5 obligatorio** (si no se logra con estructura real → NO TRADE), range con BB 1H (BB 2H si queda corta). Los pares USDT mantienen el perfil scalp (2–3h, SL 0.5–1×ATR, TP 0.5–1.5×ATR, ratio ≥1).
 
 ## Escaneo multi-par base BTC (`runMultiPairScan`)
 
