@@ -210,6 +210,121 @@ export function getLatestIndicators(ohlcv1h, ohlcv4h, ohlcv2h = null, ohlcv30m =
   };
 }
 
+export function calculateEMA(data, period) {
+  if (!data || data.length < period) return null;
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+export function calculateEMAArray(data, period) {
+  if (!data || data.length < period) return [];
+  const result = [];
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = 0; i < period; i++) result.push(null);
+  result.push(ema);
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+    result.push(ema);
+  }
+  return result;
+}
+
+export function calculateMACD(close, fast = 12, slow = 26, signal = 9) {
+  if (!close || close.length < slow + signal) return null;
+  const emaFast = calculateEMAArray(close, fast);
+  const emaSlow = calculateEMAArray(close, slow);
+  const macdLine = [];
+  for (let i = 0; i < close.length; i++) {
+    if (emaFast[i] == null || emaSlow[i] == null) { macdLine.push(null); continue; }
+    macdLine.push(emaFast[i] - emaSlow[i]);
+  }
+  const validMacd = macdLine.filter((v) => v != null);
+  if (validMacd.length < signal) return null;
+  const sigArr = calculateEMAArray(validMacd, signal);
+  const lastMacd = validMacd[validMacd.length - 1];
+  const lastSignal = sigArr[sigArr.length - 1];
+  return {
+    macd: lastMacd,
+    signal: lastSignal,
+    histogram: lastMacd - lastSignal
+  };
+}
+
+export function calculatePivots(high, low, window = 3) {
+  const len = high.length;
+  if (len < window * 2 + 1) return { lastHigh: null, lastLow: null, lastHighIdx: -1, lastLowIdx: -1 };
+  let lastHigh = null, lastLow = null, lastHighIdx = -1, lastLowIdx = -1;
+  for (let i = window; i < len - window; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = 1; j <= window; j++) {
+      if (high[i] <= high[i - j] || high[i] <= high[i + j]) isHigh = false;
+      if (low[i] >= low[i - j] || low[i] >= low[i + j]) isLow = false;
+    }
+    if (isHigh) { lastHigh = high[i]; lastHighIdx = i; }
+    if (isLow) { lastLow = low[i]; lastLowIdx = i; }
+  }
+  return { lastHigh, lastLow, lastHighIdx, lastLowIdx };
+}
+
+export function calculatePivotsArray(high, low, window = 3) {
+  const len = high.length;
+  if (len < window * 2 + 1) return { highs: [], lows: [] };
+  const highs = [], lows = [];
+  for (let i = window; i < len - window; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = 1; j <= window; j++) {
+      if (high[i] <= high[i - j] || high[i] <= high[i + j]) isHigh = false;
+      if (low[i] >= low[i - j] || low[i] >= low[i + j]) isLow = false;
+    }
+    if (isHigh) highs.push({ idx: i, value: high[i] });
+    if (isLow) lows.push({ idx: i, value: low[i] });
+  }
+  return { highs, lows };
+}
+
+export function calculateVolumeProfile(ohlcv, numBuckets = 15) {
+  if (!ohlcv || ohlcv.length < 10) return null;
+  const highs = ohlcv.map((d) => d[2]);
+  const lows = ohlcv.map((d) => d[3]);
+  const volumes = ohlcv.map((d) => d[5]);
+  const minPrice = Math.min(...lows);
+  const maxPrice = Math.max(...highs);
+  const range = maxPrice - minPrice;
+  if (range <= 0) return null;
+  const bucketSize = range / numBuckets;
+  const buckets = new Array(numBuckets).fill(0);
+  for (let i = 0; i < ohlcv.length; i++) {
+    const midPrice = (highs[i] + lows[i]) / 2;
+    let idx = Math.floor((midPrice - minPrice) / bucketSize);
+    if (idx >= numBuckets) idx = numBuckets - 1;
+    if (idx < 0) idx = 0;
+    buckets[idx] += volumes[i];
+  }
+  let maxVol = 0, pocIdx = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    if (buckets[i] > maxVol) { maxVol = buckets[i]; pocIdx = i; }
+  }
+  const poc = minPrice + (pocIdx + 0.5) * bucketSize;
+  let totalVol = buckets.reduce((a, b) => a + b, 0);
+  let valueAreaVol = 0;
+  const sortedBuckets = buckets.map((v, i) => ({ v, i })).sort((a, b) => b.v - a.v);
+  const vaBuckets = [];
+  for (const b of sortedBuckets) {
+    vaBuckets.push(b.i);
+    valueAreaVol += b.v;
+    if (valueAreaVol >= totalVol * 0.7) break;
+  }
+  const vaPrices = vaBuckets.map((i) => minPrice + (i + 0.5) * bucketSize);
+  const vah = Math.max(...vaPrices);
+  const val = Math.min(...vaPrices);
+  return { poc, vah, val };
+}
+
 export function getIndicatorsForTimeframe(ohlcv, timeframe = "1h") {
   const extract = (data, idx) => data.map(d => d[idx]);
   const o = extract(ohlcv, 1), h = extract(ohlcv, 2),
