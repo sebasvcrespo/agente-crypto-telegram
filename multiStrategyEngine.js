@@ -63,12 +63,14 @@ function pairLabel(symbol) {
 
 function fmtBtc(v) {
   if (v == null || isNaN(v)) return "N/A";
-  return v.toFixed(8);
+  return v.toFixed(10);
 }
 
-function pct(entry, level) {
+function pct(entry, level, direction) {
   if (!entry || !level) return "N/A";
-  return `${((level - entry) / entry * 100).toFixed(2)}%`;
+  const raw = (level - entry) / entry * 100;
+  const signed = direction === "SHORT" ? -raw : raw;
+  return `${signed.toFixed(3)}%`;
 }
 
 function formatWinnerMessage(w) {
@@ -85,10 +87,10 @@ function formatWinnerMessage(w) {
   msg += `⭐ Score: ${w.score} ${bar(w.score)}\n`;
   msg += `🎲 Probabilidad: ${w.probability}%\n\n`;
   msg += `💰 Entrada: ${fmtBtc(w.levels.entry)} BTC\n`;
-  msg += `🛑 SL: ${fmtBtc(w.levels.sl)} BTC (${pct(w.levels.entry, w.levels.sl)})\n`;
-  msg += `🎯 TP1 (33%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1)})\n`;
-  msg += `🎯 TP2 (33%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2)})\n`;
-  msg += `🎯 TP3 (34%): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3)})\n\n`;
+  msg += `🛑 SL: ${fmtBtc(w.levels.sl)} BTC (${pct(w.levels.entry, w.levels.sl, w.direction)})\n`;
+  msg += `🎯 TP1 (33%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
+  msg += `🎯 TP2 (33%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
+  msg += `🎯 TP3 (34%): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3, w.direction)})\n\n`;
   msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx 15x)\n`;
   msg += `📊 Riesgo: ${w.levels.riskBtc.toFixed(8)} BTC (5% de 0.00016 BTC) — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n\n`;
 

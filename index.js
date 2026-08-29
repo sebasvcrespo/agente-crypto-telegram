@@ -1691,9 +1691,10 @@ bot.command("start", async (ctx) => {
       "*Comandos básicos:*\n" +
       "• `/PAR` — Analiza cualquier par con contexto BTC (ej: `/ETH`, `/BTC`)\n" +
       "• `/PAR TF` — Todos los indicadores en una temporalidad (ej: `/ETH 1h`, `/ADA 4h`)\n" +
-      "• `Abierto` — Activa las alertas automáticas (BTC 1H, BTC 30M y escaneo multi-par)\n" +
+      "• `Abierto` — Activa las alertas automáticas (BTC 1H, BTC 30M, multi-par y multi-estrategia interna)\n" +
       "• `Cerrado` — Pausa las alertas automáticas\n" +
-      "• `Escaneo` — Escaneo multi-par manual inmediato\n\n" +
+      "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
+      "• `Estrategia` — Multi-estrategia interna manual inmediata (10 pares base BTC, 30M/5M)\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
       "• `/PAR FUENTE DIRECCION` — Bot+Futuros con fuente (ej: `/ETH Pionex Long`, `/BTC Bitget Short`)\n" +

@@ -7,7 +7,7 @@ export function calculateLevels(entryPrice, atr5m, direction) {
   if (!entryPrice || !atr5m || atr5m <= 0) return null;
 
   const isLong = direction === "LONG";
-  const slAtrMult = 1.5;
+  const slAtrMult = 2.0;
 
   const slDistance = slAtrMult * atr5m;
   const r = slDistance;
