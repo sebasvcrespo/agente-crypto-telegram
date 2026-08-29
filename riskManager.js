@@ -1,5 +1,5 @@
 const CAPITAL_BTC = 0.00016;
-const RISK_PERCENT = 0.05;
+const RISK_PERCENT = 0.10;
 const RISK_BTC = CAPITAL_BTC * RISK_PERCENT;
 const MAX_LEVERAGE = 15;
 
@@ -11,9 +11,9 @@ export function calculateLevels(entryPrice, atr5m, direction) {
 
   const slDistance = slAtrMult * atr5m;
   const r = slDistance;
-  const tp1Mult = 0.8;
-  const tp2Mult = 1.2;
-  const tp3Mult = 1.7;
+  const tp1Mult = 1.0;
+  const tp2Mult = 1.7;
+  const tp3Mult = 2.5;
 
   const sl = isLong ? entryPrice - slDistance : entryPrice + slDistance;
   const tp1 = isLong ? entryPrice + tp1Mult * r : entryPrice - tp1Mult * r;
