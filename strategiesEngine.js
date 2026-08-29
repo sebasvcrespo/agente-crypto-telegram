@@ -30,7 +30,7 @@ const MIN_SCORE = 60;
 const MIN_PROB = 40;
 const ENSEMBLE_BONUS = 5;
 const PIONEX_INTERVALS = {
-  "1m": "1M", "5m": "5M", "15m": "15M", "30m": "30M",
+  "1m": "1M", "15m": "15M", "30m": "30M",
   "1h": "60M", "2h": "120M", "4h": "4H"
 };
 
@@ -183,7 +183,7 @@ function fmtV(num) {
   return Number(num).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
-function buildContextText(label, tf30, tf5, ticker, funding) {
+function buildContextText(label, tf30, tf15, ticker, funding) {
   const n = (s) => (s == null ? "N/A" : s.toFixed(2));
   const adxFmt = (adx) => (adx ? `ADX ${adx.adx} | DI+ ${adx.diPlus} | DI- ${adx.diMinus}` : "N/A");
   const bbFmt = (bb) => (bb ? `BB(20,2) > U ${fmt(bb.upper)} | Mid ${fmt(bb.middle)} | L ${fmt(bb.lower)} (ancho ${((bb.upper - bb.lower) / bb.middle * 100).toFixed(2)}%)` : "N/A");
@@ -202,12 +202,12 @@ ATR(14): ${fmt(tf30?.atr)} (${atrPct(tf30?.atr)})
 ${bbFmt(tf30?.bb)}
 Volumen últimas velas: ${fmtV(tf30?.lastVol)} (media 34: ${fmtV(tf30?.volMedia)})
 
---- TIME-FRAME GATILLO 5M (entrada, SL y TPs) ---
-RSI(14): ${n(tf5?.rsi)}
-ADX/DMI(14): ${adxFmt(tf5?.adx)}
-ATR(14): ${fmt(tf5?.atr)} (${(tf5?.atr && tf30?.precio ? (tf5.atr / tf30.precio * 100).toFixed(2) : "N/A")}%)
-${bbFmt(tf5?.bb)}
-Volumen últimas velas: ${fmtV(tf5?.lastVol)} (media 34: ${fmtV(tf5?.volMedia)})
+--- TIME-FRAME GATILLO 15M (entrada, SL y TPs) ---
+RSI(14): ${n(tf15?.rsi)}
+ADX/DMI(14): ${adxFmt(tf15?.adx)}
+ATR(14): ${fmt(tf15?.atr)} (${(tf15?.atr && tf30?.precio ? (tf15.atr / tf30.precio * 100).toFixed(2) : "N/A")}%)
+${bbFmt(tf15?.bb)}
+Volumen últimas velas: ${fmtV(tf15?.lastVol)} (media 34: ${fmtV(tf15?.volMedia)})
 
 --- DATOS 24H ---
 Precio: ${fmt(ticker?.last) || "N/A"}
@@ -227,8 +227,8 @@ ${STRATEGY_DEFINITIONS}
 
 REGLA DE TEMPORALIDADES:
 - TIME-FRAME MAYOR: 30M (para identificar la zona de interés, tendencia y contexto).
-- GATILLO: 5M (para calcular con precisión la ENTRADA, el STOP LOSS y los 3 TAKE PROFITS, basándote en el ATR de 5M y la estructura de 5M).
-- NO analices en 1H/2H/4H. Usa SOLO 30M (contexto) y 5M (gatillo).
+- GATILLO: 15M (para calcular con precisión la ENTRADA, el STOP LOSS y los 3 TAKE PROFITS, basándote en el ATR de 15M y la estructura de 15M).
+- NO analices en 1H/2H/4H. Usa SOLO 30M (contexto) y 15M (gatillo).
 
 CRITERIOS DE SCORING (por cada estrategia):
 - Score 0-100 = calidad técnica de la señal en ese par y momento.
@@ -243,8 +243,8 @@ INSTRUCCIONES:
 1. Evalúa CADA UNA de las 6 estrategias y asigna score + probabilidad a cada una (solo para las que tengan señal; si no hay señal, pon score 0).
 2. Identifica la MEJOR estrategia (mayor score, considerando el ensemble bonus por confluencia) y la dirección (LONG o SHORT o NEUTRAL).
 3. Para la mejor estrategia, calcula PRECIOS EN BTC:
-   - Entrada (price): nivel preciso del gatillo 5M.
-   - SL: según la estructura de la estrategia (bajo el mínimo del sweep/OB/FVG para LONG, arriba para SHORT), entre 0.5-1.5× ATR(5m).
+   - Entrada (price): nivel preciso del gatillo 15M.
+   - SL: según la estructura de la estrategia (bajo el mínimo del sweep/OB/FVG para LONG, arriba para SHORT), entre 0.5-1.5× ATR(15m).
    - TP1, TP2, TP3: 3 objetivos escalonados (salen 33%, 33%, 34% del capital). El último TP (TP3) NO debe superar 1.7R (1.7 × distancia SL). Los TP se distribuyen dentro de ese rango (ej TP1 ~0.5-0.6R, TP2 ~1.2R, TP3 ~1.7R).
    - Apalancamiento sugerido (leverage): máximo 4x, y SIEMPRE menor o igual al que permita que el SL no liquide (ajustalo según la distancia % del SL para que una liquidación forzada ocurra DESPUÉS que el SL técnico).
 
@@ -283,7 +283,7 @@ async function analyzePair(base) {
   const symbol = symbolForPair(base);
   const label = pairLabel(symbol);
   const data = {};
-  for (const tf of ["5m", "30m", "1h"]) {
+  for (const tf of ["15m", "30m", "1h"]) {
     try {
       data[tf] = await fetchPionexKlines(symbol, tf, 100);
     } catch (e) {
@@ -300,8 +300,8 @@ async function analyzePair(base) {
   try { funding = await fetchPionexFunding(symbol); } catch (e) {}
 
   const tf30 = computeIndicatorSet(data["30m"]);
-  const tf5 = computeIndicatorSet(data["5m"].length ? data["5m"] : data["30m"]);
-  const contextText = buildContextText(label, tf30, tf5, ticker, funding);
+  const tf15 = computeIndicatorSet(data["15m"].length ? data["15m"] : data["30m"]);
+  const contextText = buildContextText(label, tf30, tf15, ticker, funding);
   const prompt = buildPrompt(label, contextText);
   const content = await callAI([{ role: "user", content: prompt }]);
   const parsed = parseAIJson(content);
@@ -407,7 +407,7 @@ export async function runMultiStrategyAnalysis(force = false) {
     return;
   }
 
-  console.log("🔄 Iniciando análisis multi-estrategia independiente (10 pares base BTC, 30M/5M)...");
+  console.log("🔄 Iniciando análisis multi-estrategia independiente (10 pares base BTC, 30M/15M)...");
   const winners = [];
   const errors = [];
 
@@ -430,7 +430,7 @@ export async function runMultiStrategyAnalysis(force = false) {
   try {
     let msg;
     if (!winners.length) {
-      msg = `🧠 MULTI-ESTRATEGIA (30M/5M)\n\n❌ Sin Oportunidades`;
+      msg = `🧠 MULTI-ESTRATEGIA (30M/15M)\n\n❌ Sin Oportunidades`;
       if (errors.length) {
         msg += "\n\n⚠️ Errores:";
         for (const e of errors) msg += `\n• ${e}`;
@@ -438,7 +438,7 @@ export async function runMultiStrategyAnalysis(force = false) {
     } else {
       winners.sort((a, b) => b.score - a.score);
       const best = winners[0];
-      msg = `🧠 MULTI-ESTRATEGIA (30M/5M)\n\n${formatWinnerMessage(best)}`;
+      msg = `🧠 MULTI-ESTRATEGIA (30M/15M)\n\n${formatWinnerMessage(best)}`;
       if (winners.length > 1) {
         msg += `\n${formatRanking(winners.slice(1))}`;
       }

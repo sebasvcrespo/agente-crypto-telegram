@@ -1858,7 +1858,7 @@ bot.on("message:text", async (ctx) => {
         await ctx.reply("⚠️ Aún no tengo registrado tu chat. Escribí *Abierto* primero.", { parse_mode: "Markdown" });
         return;
       }
-      await ctx.reply("🧠 Ejecutando análisis multi-estrategia interno (10 pares base BTC, 30M/5M)...\n\nToma ~20 segundos.");
+      await ctx.reply("🧠 Ejecutando análisis multi-estrategia interno (10 pares base BTC, 30M/15M)...\n\nToma ~20 segundos.");
       runInternalMultiStrategy(true).catch(async (err) => {
         console.error("❌ Error en multi-estrategia manual:", err.message);
         await ctx.reply(`⚠️ Error en multi-estrategia manual: ${err.message}`);

@@ -116,11 +116,11 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - **Módulo independiente, 100% determinista (SIN IA).** No altera los flujos de 1H, multipar 30m ni el multi-estrategia antiguo de `strategiesEngine.js` (que sigue existiendo pero ya **no se ejecuta** desde el cron).
 - Cron `1,31 * * * *` (min 01 y 31, un minuto después del cierre de la vela 30m). Respeta `Abierto/Cerrado`. Comando manual: `Estrategia` (fuerza, ignora Cerrado).
 - Recorre los 10 pares base BTC (`INTERNAL_MULTI_STRATEGY_LIST`): XRP, ADA, ORDI, LINK, SUI, DOGE, SOL, PAXG, ETH, BNB.
-- Temporalidades: **30M = contexto/zona (450 velas → soporta EMA200), 5M = gatillo/entrada (100 velas)**.
-- Pool centralizado de indicadores (`buildIndicatorPool` en `strategies.js`): BB, RSI, ADX, ATR, EMA20/50/200, MACD, pivotes (swing highs/lows) y Volume Profile (POC/VAH/VAL) sobre 30m y 5m. Patrón de consumo idéntico a `comentarios.txt`: cada estrategia toma el subconjunto que necesita.
+- Temporalidades: **30M = contexto/zona (450 velas → soporta EMA200), 15M = gatillo/entrada (100 velas)**.
+- Pool centralizado de indicadores (`buildIndicatorPool` en `strategies.js`): BB, RSI, ADX, ATR, EMA20/50/200, MACD, pivotes (swing highs/lows) y Volume Profile (POC/VAH/VAL) sobre 30m y 15m. Patrón de consumo idéntico a `comentarios.txt`: cada estrategia toma el subconjunto que necesita.
 - 6 estrategias (`SMC_Reversal`, `Trend_Pullback`, `VP_Mean_Revert`, `Breakout`, `Liquidity_Grab`, `RSI_Divergence`). Cada una asigna su propio score+probabilidad con su lógica `analyze()`; mínimo `MIN_SCORE=60`. La divergencia RSI requiere pivots recientes (≤12 velas) y espaciados (≥4 velas).
 - `rankCandidates`: agrupa por dirección, aplica **Ensemble Bonus +5 pts por estrategia confluente** y ordena por score. El mejor par gana; el resto reporta como confluencias.
-- `riskManager.calculateLevels`: **SL = 1.5×ATR(5m)**; R = distancia SL; **TP1=0.8R, TP2=1.2R, TP3=1.7R** (33/33/34%). Riesgo **5%** sobre **0.00016 BTC** = 0.000008 BTC. Nocional = riesgo/distancia%; leverage = nocional/0.00016 capped **15x**.
+- `riskManager.calculateLevels`: **SL dinámico según volatilidad del par sobre ATR(15m)** — Baja (PAXG, BNB, ETH) **2×ATR**, Media (XRP, SOL, ADA, LINK) **2.5×ATR**, Alta (DOGE, SUI, ORDI) **3×ATR**. R = distancia SL; **TP1=1R, TP2=1.7R, TP3=2.5R** (33/33/34%). Riesgo **10%** sobre **0.00015 BTC** = 0.000015 BTC. Nocional = riesgo/distancia%; leverage = nocional/0.00015 capped **15x**.
 - Mensaje Telegram: par ganador, estrategia ganadora, score, probabilidad, entrada/SL/TP1-3 en BTC, apalancamiento sugerido y confluencias.
 
 ## Gate duro del Screener (`evaluateScreener`)

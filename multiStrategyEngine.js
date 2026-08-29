@@ -1,6 +1,6 @@
 import axios from "axios";
 import { buildIndicatorPool, evaluateStrategies, rankCandidates } from "./strategies.js";
-import { calculateLevels } from "./riskManager.js";
+import { calculateLevels, CAPITAL_BTC, RISK_PERCENT, MAX_LEVERAGE } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
   "XRP/BTC",
@@ -16,7 +16,7 @@ export const INTERNAL_MULTI_STRATEGY_LIST = [
 ];
 
 const PIONEX_INTERVALS = {
-  "5m": "5M",
+  "15m": "15M",
   "30m": "30M"
 };
 
@@ -80,19 +80,19 @@ function formatWinnerMessage(w) {
     return "█".repeat(filled).padEnd(10, "░");
   };
 
-  let msg = `🧠 MULTI-ESTRATEGIA INTERNA (30M/5M)\n\n`;
+  let msg = `🧠 MULTI-ESTRATEGIA INTERNA (30M/15M)\n\n`;
   msg += `🏆 Par ganador: ${w.label}\n`;
   msg += `🎯 Estrategia ganadora: ${w.bestStrategy}\n`;
   msg += `📈 Dirección: ${w.direction} ${dirIcon}\n`;
   msg += `⭐ Score: ${w.score} ${bar(w.score)}\n`;
   msg += `🎲 Probabilidad: ${w.probability}%\n\n`;
   msg += `💰 Entrada: ${fmtBtc(w.levels.entry)} BTC\n`;
-  msg += `🛑 SL: ${fmtBtc(w.levels.sl)} BTC (${pct(w.levels.entry, w.levels.sl, w.direction)})\n`;
+  msg += `🛑 SL: ${fmtBtc(w.levels.sl)} BTC (${pct(w.levels.entry, w.levels.sl, w.direction)}) — ${w.levels.slAtrMult}×ATR(15m)\n`;
   msg += `🎯 TP1 (33%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
   msg += `🎯 TP2 (33%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
   msg += `🎯 TP3 (34%): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3, w.direction)})\n\n`;
-  msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx 15x)\n`;
-  msg += `📊 Riesgo: ${w.levels.riskBtc.toFixed(8)} BTC (5% de 0.00016 BTC) — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n\n`;
+  msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx ${MAX_LEVERAGE}x)\n`;
+  msg += `📊 Riesgo: ${w.levels.riskBtc.toFixed(8)} BTC (${Math.round(RISK_PERCENT * 100)}% de ${CAPITAL_BTC} BTC) — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n\n`;
 
   if (w.confluences && w.confluences.length) {
     msg += `🔁 Confluencias (ensemble):\n`;
@@ -126,23 +126,23 @@ function sendTelegram(text) {
 
 async function analyzePair(base) {
   const symbol = base.endsWith("/BTC") ? `${base.replace(/\/BTC$/, "")}/BTC:BTC` : `${base}/USDT:USDT`;
-  let data30 = [], data5 = [];
+  let data30 = [], data15 = [];
   try {
     data30 = await fetchPionexKlines(symbol, "30m");
   } catch (e) {
     throw new Error(`klines 30m ${e.message}`);
   }
   try {
-    data5 = await fetchPionexKlines(symbol, "5m");
+    data15 = await fetchPionexKlines(symbol, "15m");
   } catch (e) {
-    throw new Error(`klines 5m ${e.message}`);
+    throw new Error(`klines 15m ${e.message}`);
   }
-  if (!data30 || data30.length < 20 || !data5 || data5.length < 20) {
-    throw new Error(`datos insuficientes (30m=${data30?.length}, 5m=${data5?.length})`);
+  if (!data30 || data30.length < 20 || !data15 || data15.length < 20) {
+    throw new Error(`datos insuficientes (30m=${data30?.length}, 15m=${data15?.length})`);
   }
 
-  const pool = buildIndicatorPool(data30, data5);
-  const results = evaluateStrategies(data30, data5, pool);
+  const pool = buildIndicatorPool(data30, data15);
+  const results = evaluateStrategies(data30, data15, pool);
   const candidates = rankCandidates(results);
 
   if (!candidates.length) {
@@ -150,9 +150,9 @@ async function analyzePair(base) {
   }
 
   const best = candidates[0];
-  const atr5m = pool.p5.atr;
-  const entry = pool.p5.precio;
-  const levels = calculateLevels(entry, atr5m, best.direction);
+  const atr15 = pool.p15.atr;
+  const entry = pool.p15.precio;
+  const levels = calculateLevels(entry, atr15, best.direction, symbol);
 
   if (!levels) {
     return { base, label: pairLabel(symbol), trade: false };
@@ -177,7 +177,7 @@ export async function runInternalMultiStrategy(force = false) {
     return;
   }
 
-  console.log("🔄 Iniciando análisis multi-estrategia INTERNO (10 pares base BTC, 30M contexto / 5M gatillo)...");
+  console.log("🔄 Iniciando análisis multi-estrategia INTERNO (10 pares base BTC, 30M contexto / 15M gatillo)...");
   const winners = [];
   const errors = [];
 
@@ -200,7 +200,7 @@ export async function runInternalMultiStrategy(force = false) {
   try {
     let msg;
     if (!winners.length) {
-      msg = `🧠 MULTI-ESTRATEGIA INTERNA (30M/5M)\n\n❌ Sin oportunidades válidas`;
+      msg = `🧠 MULTI-ESTRATEGIA INTERNA (30M/15M)\n\n❌ Sin oportunidades válidas`;
       if (errors.length) {
         msg += "\n\n⚠️ Errores:";
         for (const e of errors) msg += `\n• ${e}`;

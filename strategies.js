@@ -15,7 +15,7 @@ const STRATEGY_LIST = [
 
 const MIN_SCORE = 60;
 
-export function buildIndicatorPool(ohlcv30m, ohlcv5m) {
+export function buildIndicatorPool(ohlcv30m, ohlcv15m) {
   const extract = (data, idx) => data.map((d) => d[idx]);
   const result = {};
 
@@ -40,10 +40,10 @@ export function buildIndicatorPool(ohlcv30m, ohlcv5m) {
     };
   }
 
-  if (ohlcv5m && ohlcv5m.length >= 20) {
-    const o = extract(ohlcv5m, 1), h = extract(ohlcv5m, 2),
-          l = extract(ohlcv5m, 3), c = extract(ohlcv5m, 4), v = extract(ohlcv5m, 5);
-    result.p5 = {
+  if (ohlcv15m && ohlcv15m.length >= 20) {
+    const o = extract(ohlcv15m, 1), h = extract(ohlcv15m, 2),
+          l = extract(ohlcv15m, 3), c = extract(ohlcv15m, 4), v = extract(ohlcv15m, 5);
+    result.p15 = {
       precio: c[c.length - 1],
       close: c, high: h, low: l, open: o, volume: v,
       bb: calculateBB(c, 20, 2),
@@ -63,8 +63,8 @@ export function buildIndicatorPool(ohlcv30m, ohlcv5m) {
 }
 
 function smcReversal(pool) {
-  const p30 = pool.p30, p5 = pool.p5;
-  if (!p30 || !p5) return null;
+  const p30 = pool.p30, p15 = pool.p15;
+  if (!p30 || !p15) return null;
 
   const { lastHigh, lastLow } = calculatePivots(p30.high, p30.low, 3);
   if (lastHigh == null && lastLow == null) return null;
@@ -72,37 +72,37 @@ function smcReversal(pool) {
   const nearPivotHigh = lastHigh && Math.abs(p30.precio - lastHigh) / lastHigh < 0.005;
   const nearPivotLow = lastLow && Math.abs(p30.precio - lastLow) / lastLow < 0.005;
   const ema200 = p30.ema200;
-  const rsi5 = p5.rsi;
-  const adx5 = p5.adx?.adx;
+  const rsi15 = p15.rsi;
+  const adx15 = p15.adx?.adx;
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
-  if (nearPivotLow && rsi5 != null && rsi5 < 45 && ema200 && p30.precio > ema200 * 0.97) {
+  if (nearPivotLow && rsi15 != null && rsi15 < 45 && ema200 && p30.precio > ema200 * 0.97) {
     signal = "LONG";
     score = 60;
     prob = 45;
     reasons.push("Reversal en pivot bajo + RSI bajo + precio sobre EMA200");
-    if (p5.bb && p5.precio < p5.bb.lower) { score += 10; prob += 7; reasons.push("Bajo BB 5m"); }
-    if (rsi5 < 35) { score += 10; prob += 8; reasons.push("RSI extremo"); }
-    if (adx5 != null && adx5 < 25) { score += 10; prob += 7; reasons.push("ADX bajo (rango)"); }
-    if (p5.macd && p5.macd.histogram > 0) { score += 10; prob += 5; reasons.push("MACD histogram positivo"); }
-  } else if (nearPivotHigh && rsi5 != null && rsi5 > 55 && ema200 && p30.precio < ema200 * 1.03) {
+    if (p15.bb && p15.precio < p15.bb.lower) { score += 10; prob += 7; reasons.push("Bajo BB 15m"); }
+    if (rsi15 < 35) { score += 10; prob += 8; reasons.push("RSI extremo"); }
+    if (adx15 != null && adx15 < 25) { score += 10; prob += 7; reasons.push("ADX bajo (rango)"); }
+    if (p15.macd && p15.macd.histogram > 0) { score += 10; prob += 5; reasons.push("MACD histogram positivo"); }
+  } else if (nearPivotHigh && rsi15 != null && rsi15 > 55 && ema200 && p30.precio < ema200 * 1.03) {
     signal = "SHORT";
     score = 60;
     prob = 45;
     reasons.push("Reversal en pivot alto + RSI alto + precio bajo EMA200");
-    if (p5.bb && p5.precio > p5.bb.upper) { score += 10; prob += 7; reasons.push("Sobre BB 5m"); }
-    if (rsi5 > 65) { score += 10; prob += 8; reasons.push("RSI extremo"); }
-    if (adx5 != null && adx5 < 25) { score += 10; prob += 7; reasons.push("ADX bajo (rango)"); }
-    if (p5.macd && p5.macd.histogram < 0) { score += 10; prob += 5; reasons.push("MACD histogram negativo"); }
+    if (p15.bb && p15.precio > p15.bb.upper) { score += 10; prob += 7; reasons.push("Sobre BB 15m"); }
+    if (rsi15 > 65) { score += 10; prob += 8; reasons.push("RSI extremo"); }
+    if (adx15 != null && adx15 < 25) { score += 10; prob += 7; reasons.push("ADX bajo (rango)"); }
+    if (p15.macd && p15.macd.histogram < 0) { score += 10; prob += 5; reasons.push("MACD histogram negativo"); }
   }
 
   return { strategy: "SMC_Reversal", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
 }
 
 function trendPullback(pool) {
-  const p30 = pool.p30, p5 = pool.p5;
-  if (!p30 || !p5) return null;
+  const p30 = pool.p30, p15 = pool.p15;
+  if (!p30 || !p15) return null;
 
   const adx30 = p30.adx?.adx;
   const diP30 = p30.adx?.diPlus;
@@ -126,8 +126,8 @@ function trendPullback(pool) {
         prob = 48;
         reasons.push("Tendencia alcista + pullback a EMA20");
         if (adx30 > 30) { score += 10; prob += 8; reasons.push(`ADX fuerte (${adx30})`); }
-        if (p5.rsi && p5.rsi > 45 && p5.rsi < 60) { score += 10; prob += 7; reasons.push("RSI 5m neutral-alcista"); }
-        if (p5.bb && p5.precio <= p5.bb.middle * 1.005) { score += 10; prob += 5; reasons.push("Precio cerca de BB middle 5m"); }
+        if (p15.rsi && p15.rsi > 45 && p15.rsi < 60) { score += 10; prob += 7; reasons.push("RSI 15m neutral-alcista"); }
+        if (p15.bb && p15.precio <= p15.bb.middle * 1.005) { score += 10; prob += 5; reasons.push("Precio cerca de BB middle 15m"); }
       }
     } else if (bearishOrder && diM30 > diP30) {
       const distToEma = Math.abs(p30.precio - p30.ema20) / p30.precio;
@@ -137,8 +137,8 @@ function trendPullback(pool) {
         prob = 48;
         reasons.push("Tendencia bajista + rebote a EMA20");
         if (adx30 > 30) { score += 10; prob += 8; reasons.push(`ADX fuerte (${adx30})`); }
-        if (p5.rsi && p5.rsi > 40 && p5.rsi < 55) { score += 10; prob += 7; reasons.push("RSI 5m neutral-bajista"); }
-        if (p5.bb && p5.precio >= p5.bb.middle * 0.995) { score += 10; prob += 5; reasons.push("Precio cerca de BB middle 5m"); }
+        if (p15.rsi && p15.rsi > 40 && p15.rsi < 55) { score += 10; prob += 7; reasons.push("RSI 15m neutral-bajista"); }
+        if (p15.bb && p15.precio >= p15.bb.middle * 0.995) { score += 10; prob += 5; reasons.push("Precio cerca de BB middle 15m"); }
       }
     }
   }
@@ -147,13 +147,13 @@ function trendPullback(pool) {
 }
 
 function vpMeanRevert(pool) {
-  const p30 = pool.p30, p5 = pool.p5;
-  if (!p30 || !p5 || !p30.vp) return null;
+  const p30 = pool.p30, p15 = pool.p15;
+  if (!p30 || !p15 || !p30.vp) return null;
 
   const { poc, vah, val } = p30.vp;
-  const rsi5 = p5.rsi;
-  const bb5 = p5.bb;
-  if (!rsi5 || !bb5) return null;
+  const rsi15 = p15.rsi;
+  const bb15 = p15.bb;
+  if (!rsi15 || !bb15) return null;
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
@@ -164,102 +164,102 @@ function vpMeanRevert(pool) {
     score = 60;
     prob = 45;
     reasons.push(`Precio (${p30.precio.toFixed(8)}) bajo VAL (${val.toFixed(8)})`);
-    if (rsi5 < 40) { score += 10; prob += 8; reasons.push("RSI 5m sobrevendido"); }
-    if (p5.precio < bb5.lower) { score += 10; prob += 7; reasons.push("Bajo BB 5m"); }
-    if (p5.adx?.adx != null && p5.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
+    if (rsi15 < 40) { score += 10; prob += 8; reasons.push("RSI 15m sobrevendido"); }
+    if (p15.precio < bb15.lower) { score += 10; prob += 7; reasons.push("Bajo BB 15m"); }
+    if (p15.adx?.adx != null && p15.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
   } else if (p30.precio > vah && distToPoc > 0.01) {
     signal = "SHORT";
     score = 60;
     prob = 45;
     reasons.push(`Precio (${p30.precio.toFixed(8)}) sobre VAH (${vah.toFixed(8)})`);
-    if (rsi5 > 60) { score += 10; prob += 8; reasons.push("RSI 5m sobrecomprado"); }
-    if (p5.precio > bb5.upper) { score += 10; prob += 7; reasons.push("Sobre BB 5m"); }
-    if (p5.adx?.adx != null && p5.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
+    if (rsi15 > 60) { score += 10; prob += 8; reasons.push("RSI 15m sobrecomprado"); }
+    if (p15.precio > bb15.upper) { score += 10; prob += 7; reasons.push("Sobre BB 15m"); }
+    if (p15.adx?.adx != null && p15.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
   }
 
   return { strategy: "VP_Mean_Revert", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
 }
 
 function breakout(pool) {
-  const p30 = pool.p30, p5 = pool.p5;
-  if (!p30 || !p5) return null;
+  const p30 = pool.p30, p15 = pool.p15;
+  if (!p30 || !p15) return null;
 
-  const bb5 = p5.bb;
-  const rsi5 = p5.rsi;
-  if (!bb5 || !rsi5 || !p5.close || p5.close.length < 2) return null;
+  const bb15 = p15.bb;
+  const rsi15 = p15.rsi;
+  if (!bb15 || !rsi15 || !p15.close || p15.close.length < 2) return null;
 
-  const lastClose = p5.close[p5.close.length - 1];
-  const prevClose = p5.close[p5.close.length - 2];
-  const volRatio = p5.volAvg > 0 ? p5.lastVol / p5.volAvg : 0;
+  const lastClose = p15.close[p15.close.length - 1];
+  const prevClose = p15.close[p15.close.length - 2];
+  const volRatio = p15.volAvg > 0 ? p15.lastVol / p15.volAvg : 0;
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
-  const breakoutUp = prevClose <= bb5.upper && lastClose > bb5.upper;
-  const breakoutDown = prevClose >= bb5.lower && lastClose < bb5.lower;
+  const breakoutUp = prevClose <= bb15.upper && lastClose > bb15.upper;
+  const breakoutDown = prevClose >= bb15.lower && lastClose < bb15.lower;
 
   if (breakoutUp) {
     signal = "LONG";
     score = 60;
     prob = 45;
-    reasons.push(`Breakout alcista: cierre (${lastClose.toFixed(8)}) > BB upper (${bb5.upper.toFixed(8)})`);
+    reasons.push(`Breakout alcista: cierre (${lastClose.toFixed(8)}) > BB upper (${bb15.upper.toFixed(8)})`);
     if (volRatio > 1.5) { score += 15; prob += 10; reasons.push(`Volumen ${volRatio.toFixed(1)}x media`); }
     else if (volRatio > 1.0) { score += 8; prob += 5; reasons.push("Volumen sobre media"); }
-    if (rsi5 > 55) { score += 10; prob += 7; reasons.push("RSI 5m alcista"); }
-    if (p5.adx?.adx != null && p5.adx.adx > 20) { score += 10; prob += 5; reasons.push("ADX confirmado"); }
+    if (rsi15 > 55) { score += 10; prob += 7; reasons.push("RSI 15m alcista"); }
+    if (p15.adx?.adx != null && p15.adx.adx > 20) { score += 10; prob += 5; reasons.push("ADX confirmado"); }
   } else if (breakoutDown) {
     signal = "SHORT";
     score = 60;
     prob = 45;
-    reasons.push(`Breakout bajista: cierre (${lastClose.toFixed(8)}) < BB lower (${bb5.lower.toFixed(8)})`);
+    reasons.push(`Breakout bajista: cierre (${lastClose.toFixed(8)}) < BB lower (${bb15.lower.toFixed(8)})`);
     if (volRatio > 1.5) { score += 15; prob += 10; reasons.push(`Volumen ${volRatio.toFixed(1)}x media`); }
     else if (volRatio > 1.0) { score += 8; prob += 5; reasons.push("Volumen sobre media"); }
-    if (rsi5 < 45) { score += 10; prob += 7; reasons.push("RSI 5m bajista"); }
-    if (p5.adx?.adx != null && p5.adx.adx > 20) { score += 10; prob += 5; reasons.push("ADX confirmado"); }
+    if (rsi15 < 45) { score += 10; prob += 7; reasons.push("RSI 15m bajista"); }
+    if (p15.adx?.adx != null && p15.adx.adx > 20) { score += 10; prob += 5; reasons.push("ADX confirmado"); }
   }
 
   return { strategy: "Breakout", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
 }
 
 function liquidityGrab(pool) {
-  const p30 = pool.p30, p5 = pool.p5;
-  if (!p30 || !p5) return null;
+  const p30 = pool.p30, p15 = pool.p15;
+  if (!p30 || !p15) return null;
 
   const { lastHigh, lastLow } = calculatePivots(p30.high, p30.low, 3);
   if (lastHigh == null && lastLow == null) return null;
-  if (!p5.high || !p5.low || !p5.close || !p5.open) return null;
+  if (!p15.high || !p15.low || !p15.close || !p15.open) return null;
 
-  const n = p5.close.length;
-  const lastHigh5 = p5.high[n - 1];
-  const lastLow5 = p5.low[n - 1];
-  const lastClose5 = p5.close[n - 1];
-  const lastOpen5 = p5.open[n - 1];
-  const body = Math.abs(lastClose5 - lastOpen5);
-  const upperWick = lastHigh5 - Math.max(lastOpen5, lastClose5);
-  const lowerWick = Math.min(lastOpen5, lastClose5) - lastLow5;
+  const n = p15.close.length;
+  const lastHigh15 = p15.high[n - 1];
+  const lastLow15 = p15.low[n - 1];
+  const lastClose15 = p15.close[n - 1];
+  const lastOpen15 = p15.open[n - 1];
+  const body = Math.abs(lastClose15 - lastOpen15);
+  const upperWick = lastHigh15 - Math.max(lastOpen15, lastClose15);
+  const lowerWick = Math.min(lastOpen15, lastClose15) - lastLow15;
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
-  if (lastHigh != null && lastHigh5 > lastHigh && lastClose5 < lastHigh && body > 0) {
+  if (lastHigh != null && lastHigh15 > lastHigh && lastClose15 < lastHigh && body > 0) {
     const wickRatio = upperWick / body;
     if (wickRatio > 1.5) {
       signal = "SHORT";
       score = 60;
       prob = 48;
       reasons.push(`Liquidity grab alcista: mecha (${upperWick.toFixed(8)}) > ${wickRatio.toFixed(1)}x cuerpo`);
-      if (p5.rsi && p5.rsi > 60) { score += 12; prob += 8; reasons.push("RSI 5m sobrecomprado"); }
-      if (p5.bb && lastHigh5 > p5.bb.upper) { score += 10; prob += 7; reasons.push("Mecha sobre BB 5m"); }
-      if (p5.adx?.adx != null && p5.adx.adx > 15) { score += 10; prob += 5; reasons.push("ADX activo"); }
+      if (p15.rsi && p15.rsi > 60) { score += 12; prob += 8; reasons.push("RSI 15m sobrecomprado"); }
+      if (p15.bb && lastHigh15 > p15.bb.upper) { score += 10; prob += 7; reasons.push("Mecha sobre BB 15m"); }
+      if (p15.adx?.adx != null && p15.adx.adx > 15) { score += 10; prob += 5; reasons.push("ADX activo"); }
     }
-  } else if (lastLow != null && lastLow5 < lastLow && lastClose5 > lastLow && body > 0) {
+  } else if (lastLow != null && lastLow15 < lastLow && lastClose15 > lastLow && body > 0) {
     const wickRatio = lowerWick / body;
     if (wickRatio > 1.5) {
       signal = "LONG";
       score = 60;
       prob = 48;
       reasons.push(`Liquidity grab bajista: mecha (${lowerWick.toFixed(8)}) > ${wickRatio.toFixed(1)}x cuerpo`);
-      if (p5.rsi && p5.rsi < 40) { score += 12; prob += 8; reasons.push("RSI 5m sobrevendido"); }
-      if (p5.bb && lastLow5 < p5.bb.lower) { score += 10; prob += 7; reasons.push("Mecha bajo BB 5m"); }
-      if (p5.adx?.adx != null && p5.adx.adx > 15) { score += 10; prob += 5; reasons.push("ADX activo"); }
+      if (p15.rsi && p15.rsi < 40) { score += 12; prob += 8; reasons.push("RSI 15m sobrevendido"); }
+      if (p15.bb && lastLow15 < p15.bb.lower) { score += 10; prob += 7; reasons.push("Mecha bajo BB 15m"); }
+      if (p15.adx?.adx != null && p15.adx.adx > 15) { score += 10; prob += 5; reasons.push("ADX activo"); }
     }
   }
 
@@ -267,8 +267,8 @@ function liquidityGrab(pool) {
 }
 
 function rsiDivergence(pool) {
-  const p30 = pool.p30, p5 = pool.p5;
-  if (!p30 || !p5) return null;
+  const p30 = pool.p30, p15 = pool.p15;
+  if (!p30 || !p15) return null;
 
   const pivots30 = p30.pivots;
   if (!pivots30 || pivots30.lows.length < 2 || pivots30.highs.length < 2) return null;
@@ -296,11 +296,11 @@ function rsiDivergence(pool) {
       score = 45;
       prob = 40;
       reasons.push(`Divergencia alcista: LL precio + HL RSI (RSI ${rsiVal2?.toFixed(1)})`);
-      const rsiNow = p5.rsi || p30.rsi;
-      if (rsiNow != null && rsiNow < 40) { score += 10; prob += 8; reasons.push("RSI 5m sobrevendido"); }
-      if (p5.macd && p5.macd.histogram > 0) { score += 10; prob += 5; reasons.push("MACD 5m positivo"); }
-      if (p5.bb && p5.precio <= p5.bb.middle) { score += 10; prob += 5; reasons.push("Bajo BB middle 5m"); }
-      if (p5.adx?.adx != null && p5.adx.adx < 25) { score += 10; prob += 5; reasons.push("ADX bajo (contratendencia)"); }
+      const rsiNow = p15.rsi || p30.rsi;
+      if (rsiNow != null && rsiNow < 40) { score += 10; prob += 8; reasons.push("RSI 15m sobrevendido"); }
+      if (p15.macd && p15.macd.histogram > 0) { score += 10; prob += 5; reasons.push("MACD 15m positivo"); }
+      if (p15.bb && p15.precio <= p15.bb.middle) { score += 10; prob += 5; reasons.push("Bajo BB middle 15m"); }
+      if (p15.adx?.adx != null && p15.adx.adx < 25) { score += 10; prob += 5; reasons.push("ADX bajo (contratendencia)"); }
     }
   }
 
@@ -319,11 +319,11 @@ function rsiDivergence(pool) {
         score = 45;
         prob = 40;
         reasons.push(`Divergencia bajista: HH precio + LH RSI (RSI ${rsiVal2?.toFixed(1)})`);
-        const rsiNow = p5.rsi || p30.rsi;
-        if (rsiNow != null && rsiNow > 60) { score += 10; prob += 8; reasons.push("RSI 5m sobrecomprado"); }
-        if (p5.macd && p5.macd.histogram < 0) { score += 10; prob += 5; reasons.push("MACD 5m negativo"); }
-        if (p5.bb && p5.precio >= p5.bb.middle) { score += 10; prob += 5; reasons.push("Sobre BB middle 5m"); }
-        if (p5.adx?.adx != null && p5.adx.adx < 25) { score += 10; prob += 5; reasons.push("ADX bajo (contratendencia)"); }
+        const rsiNow = p15.rsi || p30.rsi;
+        if (rsiNow != null && rsiNow > 60) { score += 10; prob += 8; reasons.push("RSI 15m sobrecomprado"); }
+        if (p15.macd && p15.macd.histogram < 0) { score += 10; prob += 5; reasons.push("MACD 15m negativo"); }
+        if (p15.bb && p15.precio >= p15.bb.middle) { score += 10; prob += 5; reasons.push("Sobre BB middle 15m"); }
+        if (p15.adx?.adx != null && p15.adx.adx < 25) { score += 10; prob += 5; reasons.push("ADX bajo (contratendencia)"); }
       }
     }
   }
@@ -340,9 +340,9 @@ const ALL_STRATEGIES = [
   rsiDivergence
 ];
 
-export function evaluateStrategies(ohlcv30m, ohlcv5m, pool = null) {
-  const dataPool = pool || buildIndicatorPool(ohlcv30m, ohlcv5m);
-  if (!dataPool.p30 || !dataPool.p5) return [];
+export function evaluateStrategies(ohlcv30m, ohlcv15m, pool = null) {
+  const dataPool = pool || buildIndicatorPool(ohlcv30m, ohlcv15m);
+  if (!dataPool.p30 || !dataPool.p15) return [];
 
   const results = [];
   for (const stratFn of ALL_STRATEGIES) {
