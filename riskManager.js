@@ -1,6 +1,6 @@
 const CAPITAL_BTC = 0.00015;
 const RISK_PERCENT = 0.10;
-const RISK_BTC = CAPITAL_BTC * RISK_PERCENT;
+const RISK_BTC = 0.000010;
 const MAX_LEVERAGE = 15;
 
 const LOW_VOLATILITY = new Set(["PAXG", "BNB", "ETH"]);
@@ -38,7 +38,7 @@ export function calculateLevels(entryPrice, atr, direction, symbol) {
 
   const slDistancePct = slDistance / entryPrice;
   const notionalBtc = RISK_BTC / slDistancePct;
-  const leverage = Math.min(MAX_LEVERAGE, Math.max(1, Math.ceil(notionalBtc / CAPITAL_BTC)));
+  const leverage = Math.max(1, Math.ceil(notionalBtc / CAPITAL_BTC));
 
   return {
     direction,

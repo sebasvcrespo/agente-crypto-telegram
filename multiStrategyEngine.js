@@ -1,6 +1,6 @@
 import axios from "axios";
 import { buildIndicatorPool, evaluateStrategies, rankCandidates } from "./strategies.js";
-import { calculateLevels, CAPITAL_BTC, RISK_PERCENT, MAX_LEVERAGE } from "./riskManager.js";
+import { calculateLevels } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
   "XRP/BTC",
@@ -61,6 +61,35 @@ function pairLabel(symbol) {
   return symbol.replace(/:(USDT|BTC)$/, "");
 }
 
+async function fetchPionexRiskTable(symbol) {
+  const pionexSymbol = symbolToPionex(symbol);
+  const url = `https://api.pionex.com/api/v1/common/riskTable?symbol=${pionexSymbol}`;
+  const response = await axios.get(url, { timeout: 15000 });
+  if (!response.data?.result || !response.data?.data?.symbols?.length) return null;
+  const sym = response.data.data.symbols[0];
+  const tiers = (sym.rows || [])
+    .map((r) => ({ notional: parseFloat(r.notionalLimit), maxLev: parseFloat(r.maxLeverage) }))
+    .filter((r) => !isNaN(r.maxLev) && !isNaN(r.notional));
+  if (!tiers.length) return null;
+  return { max: Math.max(...tiers.map((t) => t.maxLev)), tiers, source: "pionex" };
+}
+
+async function fetchBtcUsd() {
+  const url = "https://api.pionex.com/api/v1/market/tickers?symbol=BTC_USDT_PERP";
+  const response = await axios.get(url, { timeout: 15000 });
+  const t = response.data?.data?.tickers?.[0];
+  return t ? parseFloat(t.close) : null;
+}
+
+function maxLeverageForNotional(riskTable, notionalUsd) {
+  if (!riskTable || !riskTable.tiers || !riskTable.tiers.length) return null;
+  const sorted = [...riskTable.tiers].sort((a, b) => a.notional - b.notional);
+  for (const t of sorted) {
+    if (notionalUsd <= t.notional) return t.maxLev;
+  }
+  return sorted[sorted.length - 1].maxLev;
+}
+
 function fmtBtc(v) {
   if (v == null || isNaN(v)) return "N/A";
   return v.toFixed(10);
@@ -91,8 +120,8 @@ function formatWinnerMessage(w) {
   msg += `🎯 TP1 (33%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
   msg += `🎯 TP2 (33%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
   msg += `🎯 TP3 (34%): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3, w.direction)})\n\n`;
-  msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx ${MAX_LEVERAGE}x)\n`;
-  msg += `📊 Riesgo: ${w.levels.riskBtc.toFixed(8)} BTC (${Math.round(RISK_PERCENT * 100)}% de ${CAPITAL_BTC} BTC) — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n\n`;
+  msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x${w.levels.exchangeMax ? ` (máx ${w.levels.exchangeMax}x)` : ""}\n`;
+  msg += `📊 Riesgo: ${w.levels.riskBtc.toFixed(8)} BTC — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n\n`;
 
   if (w.confluences && w.confluences.length) {
     msg += `🔁 Confluencias (ensemble):\n`;
@@ -124,7 +153,7 @@ function sendTelegram(text) {
     });
 }
 
-async function analyzePair(base) {
+async function analyzePair(base, btcUsd) {
   const symbol = base.endsWith("/BTC") ? `${base.replace(/\/BTC$/, "")}/BTC:BTC` : `${base}/USDT:USDT`;
   let data30 = [], data15 = [];
   try {
@@ -158,6 +187,23 @@ async function analyzePair(base) {
     return { base, label: pairLabel(symbol), trade: false };
   }
 
+  let exchangeMax = null;
+  try {
+    const riskTable = await fetchPionexRiskTable(symbol);
+    if (riskTable) {
+      const quoteBtc = symbol.endsWith(":BTC");
+      const notionalMatch = quoteBtc ? levels.notionalBtc : (btcUsd ? levels.notionalBtc * btcUsd : levels.notionalBtc);
+      exchangeMax = maxLeverageForNotional(riskTable, notionalMatch);
+    }
+  } catch (e) {
+    console.warn(`⚠️ Multi-estrategia interna: riskTable falló ${symbol}: ${e.message}`);
+  }
+
+  if (exchangeMax && exchangeMax >= 1) {
+    if (exchangeMax < levels.leverage) levels.leverage = exchangeMax;
+    levels.exchangeMax = exchangeMax;
+  }
+
   return {
     base,
     label: pairLabel(symbol),
@@ -180,10 +226,16 @@ export async function runInternalMultiStrategy(force = false) {
   console.log("🔄 Iniciando análisis multi-estrategia INTERNO (10 pares base BTC, 30M contexto / 15M gatillo)...");
   const winners = [];
   const errors = [];
+  let btcUsd = null;
+  try {
+    btcUsd = await fetchBtcUsd();
+  } catch (e) {
+    console.warn(`⚠️ Multi-estrategia interna: no se pudo obtener precio BTC/USDT: ${e.message}`);
+  }
 
   for (const base of INTERNAL_MULTI_STRATEGY_LIST) {
     try {
-      const res = await analyzePair(base);
+      const res = await analyzePair(base, btcUsd);
       if (res.trade) {
         winners.push(res);
         console.log(`✅ ${res.label}: ${res.bestStrategy} ${res.direction} Score=${res.score} Prob=${res.probability}`);
