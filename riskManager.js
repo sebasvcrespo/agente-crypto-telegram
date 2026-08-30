@@ -1,7 +1,18 @@
-const CAPITAL_BTC = 0.00015;
-const RISK_PERCENT = 0.10;
-const RISK_BTC = 0.000010;
-const MAX_LEVERAGE = 15;
+let CAPITAL_BTC = 0.00010;
+const RISK_PERCENT = 0.066;
+const MAX_LEVERAGE = 10;
+
+function calcRiskBtc() {
+  return CAPITAL_BTC * RISK_PERCENT;
+}
+
+export function setCAPITAL_BTC(value) {
+  CAPITAL_BTC = value;
+}
+
+export function getCAPITAL_BTC() {
+  return CAPITAL_BTC;
+}
 
 const LOW_VOLATILITY = new Set(["PAXG", "BNB", "ETH"]);
 const MED_VOLATILITY = new Set(["XRP", "SOL", "ADA", "LINK"]);
@@ -37,8 +48,13 @@ export function calculateLevels(entryPrice, atr, direction, symbol) {
   if (slDistance <= 0) return null;
 
   const slDistancePct = slDistance / entryPrice;
-  const notionalBtc = RISK_BTC / slDistancePct;
+  const riskBtc = calcRiskBtc();
+  const idealNotional = riskBtc / slDistancePct;
+  const maxNotional = MAX_LEVERAGE * CAPITAL_BTC;
+  const notionalBtc = Math.min(idealNotional, maxNotional);
   const leverage = Math.max(1, Math.ceil(notionalBtc / CAPITAL_BTC));
+  const actualRisk = notionalBtc * slDistancePct;
+  const riskCapped = actualRisk < riskBtc - 1e-12;
 
   return {
     direction,
@@ -47,9 +63,10 @@ export function calculateLevels(entryPrice, atr, direction, symbol) {
     tp1,
     tp2,
     tp3,
-    riskBtc: RISK_BTC,
+    riskBtc: actualRisk,
     notionalBtc,
     leverage,
+    riskCapped,
     slDistanceBtc: slDistance,
     slDistancePct: (slDistancePct * 100).toFixed(2),
     volatility,

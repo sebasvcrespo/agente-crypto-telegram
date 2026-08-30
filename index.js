@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import { getLatestIndicators, getIndicatorsForTimeframe } from "./indicators.js";
 import { initStrategiesEngine } from "./strategiesEngine.js";
 import { initInternalMultiStrategy, runInternalMultiStrategy } from "./multiStrategyEngine.js";
+import { setCAPITAL_BTC, getCAPITAL_BTC } from "./riskManager.js";
 
 dotenv.config();
 
@@ -53,10 +54,11 @@ function loadState() {
 const state = loadState();
 let botStatus = state.botStatus || "Abierto";
 let chatId = state.chatId || null;
+let capitalBtc = state.capitalBtc || 0.00010;
 
 function saveState() {
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ botStatus, chatId }, null, 2));
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ botStatus, chatId, capitalBtc }, null, 2));
   } catch (err) {
     console.error("❌ Error guardando state.json:", err.message);
   }
@@ -69,6 +71,16 @@ function setChatId(id) {
 
 function setBotStatus(status) {
   botStatus = status;
+  saveState();
+}
+
+function getCapitalBtc() {
+  return capitalBtc;
+}
+
+function setCapitalBtc(value) {
+  capitalBtc = value;
+  setCAPITAL_BTC(value);
   saveState();
 }
 
@@ -1478,6 +1490,8 @@ async function runHalfHourlyAnalysis() {
 initStrategiesEngine(bot, () => chatId);
 initInternalMultiStrategy(bot, () => chatId, () => botStatus);
 
+setCAPITAL_BTC(capitalBtc);
+
 cron.schedule("0 * * * *", () => {
   console.log("⏰ Cron ejecutándose...");
   runHourlyAnalysis().catch((err) => {
@@ -1694,7 +1708,8 @@ bot.command("start", async (ctx) => {
       "• `Abierto` — Activa las alertas automáticas (BTC 1H, BTC 30M, multi-par y multi-estrategia interna)\n" +
       "• `Cerrado` — Pausa las alertas automáticas\n" +
       "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
-      "• `Estrategia` — Multi-estrategia interna manual inmediata (10 pares base BTC, 30M/5M)\n\n" +
+      "• `Estrategia` — Multi-estrategia interna manual inmediata (10 pares base BTC, 30M/5M)\n" +
+      "• `/aumentocapital` — Actualiza el capital BTC disponible\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
       "• `/PAR FUENTE DIRECCION` — Bot+Futuros con fuente (ej: `/ETH Pionex Long`, `/BTC Bitget Short`)\n" +
@@ -1744,11 +1759,43 @@ bot.command("help", async (ctx) => {
     "• `Abierto` — Activa (BTC 1H, BTC 30M, multi-par, multi-estrategia interna)\n" +
     "• `Cerrado` — Pausa\n" +
     "• `Estrategia` — Multi-estrategia interna manual inmediata (10 pares base BTC, 30M/5M)\n" +
-    "• `Escaneo` — Escaneo multi-par manual inmediato\n\n" +
+    "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
+    "• `/aumentocapital 0.00020` — Actualiza el capital BTC disponible para el dimensionado de posiciones\n\n" +
     "*Fuentes:* `Bitget`, `Pionex`\n" +
     "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
     { parse_mode: "Markdown" }
   );
+});
+
+bot.command("aumentocapital", async (ctx) => {
+  try {
+    setChatId(ctx.chat.id);
+    const match = ctx.match && ctx.match.trim();
+    if (!match) {
+      await ctx.reply(
+        `⚠️ Formato inválido.\n\n` +
+        `Uso: \`/aumentocapital 0.00020\`\n\n` +
+        `Capital actual disponible: *${getCapitalBtc().toFixed(8)} BTC*\n` +
+        `Riesgo por trade: *6.6%* del capital (máx 10x de apalancamiento).`,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+    const value = Number(match.replace(",", "."));
+    if (isNaN(value) || value <= 0) {
+      await ctx.reply("❌ El valor debe ser un número mayor a 0. Ejemplo: `/aumentocapital 0.00020`", { parse_mode: "Markdown" });
+      return;
+    }
+    setCapitalBtc(value);
+    await ctx.reply(
+      `✅ *Capital actualizado* a *${getCapitalBtc().toFixed(8)} BTC*.\n\n` +
+      `Los próximos trades (multi-estrategia interna) usarán este nuevo capital disponible para dimensionar el nocional, siempre respetando el riesgo del 6.6% del capital y el tope de 10x de apalancamiento.`,
+      { parse_mode: "Markdown" }
+    );
+    console.log("💰 Capital actualizado a:", getCapitalBtc());
+  } catch (error) {
+    console.error("❌ Error en comando /aumentocapital:", error.message);
+  }
 });
 
 bot.on("message:text", async (ctx) => {

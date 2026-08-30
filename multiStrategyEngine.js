@@ -1,6 +1,6 @@
 import axios from "axios";
 import { buildIndicatorPool, evaluateStrategies, rankCandidates } from "./strategies.js";
-import { calculateLevels } from "./riskManager.js";
+import { calculateLevels, RISK_PERCENT } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
   "XRP/BTC",
@@ -120,8 +120,9 @@ function formatWinnerMessage(w) {
   msg += `🎯 TP1 (33%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
   msg += `🎯 TP2 (33%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
   msg += `🎯 TP3 (34%): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3, w.direction)})\n\n`;
-  msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x${w.levels.exchangeMax ? ` (máx ${w.levels.exchangeMax}x)` : ""}\n`;
-  msg += `📊 Riesgo: ${w.levels.riskBtc.toFixed(8)} BTC — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n\n`;
+  msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx 10x)${w.levels.exchangeMax ? ` — exchange ${w.levels.exchangeMax}x` : ""}\n`;
+  msg += `📊 Riesgo (${(RISK_PERCENT * 100).toFixed(1)}% de capital): ${w.levels.riskBtc.toFixed(8)} BTC — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n`;
+  if (w.levels.riskCapped) msg += `⚠️ Riesgo reducido por tope de 10x y capital disponible\n\n`;
 
   if (w.confluences && w.confluences.length) {
     msg += `🔁 Confluencias (ensemble):\n`;
