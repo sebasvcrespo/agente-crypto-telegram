@@ -15,14 +15,14 @@ const STRATEGY_LIST = [
 
 const MIN_SCORE = 60;
 
-export function buildIndicatorPool(ohlcv30m, ohlcv15m) {
+export function buildIndicatorPool(ohlcv1h, ohlcv15m) {
   const extract = (data, idx) => data.map((d) => d[idx]);
   const result = {};
 
-  if (ohlcv30m && ohlcv30m.length >= 20) {
-    const o = extract(ohlcv30m, 1), h = extract(ohlcv30m, 2),
-          l = extract(ohlcv30m, 3), c = extract(ohlcv30m, 4), v = extract(ohlcv30m, 5);
-    result.p30 = {
+  if (ohlcv1h && ohlcv1h.length >= 20) {
+    const o = extract(ohlcv1h, 1), h = extract(ohlcv1h, 2),
+          l = extract(ohlcv1h, 3), c = extract(ohlcv1h, 4), v = extract(ohlcv1h, 5);
+    result.p1h = {
       precio: c[c.length - 1],
       close: c, high: h, low: l, open: o, volume: v,
       bb: calculateBB(c, 20, 2),
@@ -34,7 +34,7 @@ export function buildIndicatorPool(ohlcv30m, ohlcv15m) {
       ema200: calculateEMA(c, 200),
       macd: calculateMACD(c),
       pivots: calculatePivotsArray(h, l, 3),
-      vp: calculateVolumeProfile(ohlcv30m),
+      vp: calculateVolumeProfile(ohlcv1h),
       volAvg: v.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, v.length),
       lastVol: v[v.length - 1]
     };
@@ -63,21 +63,21 @@ export function buildIndicatorPool(ohlcv30m, ohlcv15m) {
 }
 
 function smcReversal(pool) {
-  const p30 = pool.p30, p15 = pool.p15;
-  if (!p30 || !p15) return null;
+  const p1h = pool.p1h, p15 = pool.p15;
+  if (!p1h || !p15) return null;
 
-  const { lastHigh, lastLow } = calculatePivots(p30.high, p30.low, 3);
+  const { lastHigh, lastLow } = calculatePivots(p1h.high, p1h.low, 3);
   if (lastHigh == null && lastLow == null) return null;
 
-  const nearPivotHigh = lastHigh && Math.abs(p30.precio - lastHigh) / lastHigh < 0.005;
-  const nearPivotLow = lastLow && Math.abs(p30.precio - lastLow) / lastLow < 0.005;
-  const ema200 = p30.ema200;
+  const nearPivotHigh = lastHigh && Math.abs(p1h.precio - lastHigh) / lastHigh < 0.005;
+  const nearPivotLow = lastLow && Math.abs(p1h.precio - lastLow) / lastLow < 0.005;
+  const ema200 = p1h.ema200;
   const rsi15 = p15.rsi;
   const adx15 = p15.adx?.adx;
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
-  if (nearPivotLow && rsi15 != null && rsi15 < 45 && ema200 && p30.precio > ema200 * 0.97) {
+  if (nearPivotLow && rsi15 != null && rsi15 < 45 && ema200 && p1h.precio > ema200 * 0.97) {
     signal = "LONG";
     score = 60;
     prob = 45;
@@ -86,7 +86,7 @@ function smcReversal(pool) {
     if (rsi15 < 35) { score += 10; prob += 8; reasons.push("RSI extremo"); }
     if (adx15 != null && adx15 < 25) { score += 10; prob += 7; reasons.push("ADX bajo (rango)"); }
     if (p15.macd && p15.macd.histogram > 0) { score += 10; prob += 5; reasons.push("MACD histogram positivo"); }
-  } else if (nearPivotHigh && rsi15 != null && rsi15 > 55 && ema200 && p30.precio < ema200 * 1.03) {
+  } else if (nearPivotHigh && rsi15 != null && rsi15 > 55 && ema200 && p1h.precio < ema200 * 1.03) {
     signal = "SHORT";
     score = 60;
     prob = 45;
@@ -101,25 +101,25 @@ function smcReversal(pool) {
 }
 
 function trendPullback(pool) {
-  const p30 = pool.p30, p15 = pool.p15;
-  if (!p30 || !p15) return null;
+  const p1h = pool.p1h, p15 = pool.p15;
+  if (!p1h || !p15) return null;
 
-  const adx30 = p30.adx?.adx;
-  const diP30 = p30.adx?.diPlus;
-  const diM30 = p30.adx?.diMinus;
+  const adx30 = p1h.adx?.adx;
+  const diP30 = p1h.adx?.diPlus;
+  const diM30 = p1h.adx?.diMinus;
   if (adx30 == null || diP30 == null || diM30 == null) return null;
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
-  const emaOrdered = p30.ema20 && p30.ema50 && p30.ema200;
+  const emaOrdered = p1h.ema20 && p1h.ema50 && p1h.ema200;
   const trending = adx30 > 25;
 
   if (trending && emaOrdered) {
-    const bullishOrder = p30.ema20 > p30.ema50 && p30.ema50 > p30.ema200;
-    const bearishOrder = p30.ema20 < p30.ema50 && p30.ema50 < p30.ema200;
+    const bullishOrder = p1h.ema20 > p1h.ema50 && p1h.ema50 > p1h.ema200;
+    const bearishOrder = p1h.ema20 < p1h.ema50 && p1h.ema50 < p1h.ema200;
 
     if (bullishOrder && diP30 > diM30) {
-      const distToEma = Math.abs(p30.precio - p30.ema20) / p30.precio;
+      const distToEma = Math.abs(p1h.precio - p1h.ema20) / p1h.precio;
       if (distToEma < 0.015) {
         signal = "LONG";
         score = 60;
@@ -130,7 +130,7 @@ function trendPullback(pool) {
         if (p15.bb && p15.precio <= p15.bb.middle * 1.005) { score += 10; prob += 5; reasons.push("Precio cerca de BB middle 15m"); }
       }
     } else if (bearishOrder && diM30 > diP30) {
-      const distToEma = Math.abs(p30.precio - p30.ema20) / p30.precio;
+      const distToEma = Math.abs(p1h.precio - p1h.ema20) / p1h.precio;
       if (distToEma < 0.015) {
         signal = "SHORT";
         score = 60;
@@ -147,31 +147,31 @@ function trendPullback(pool) {
 }
 
 function vpMeanRevert(pool) {
-  const p30 = pool.p30, p15 = pool.p15;
-  if (!p30 || !p15 || !p30.vp) return null;
+  const p1h = pool.p1h, p15 = pool.p15;
+  if (!p1h || !p15 || !p1h.vp) return null;
 
-  const { poc, vah, val } = p30.vp;
+  const { poc, vah, val } = p1h.vp;
   const rsi15 = p15.rsi;
   const bb15 = p15.bb;
   if (!rsi15 || !bb15) return null;
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
-  const distToPoc = (p30.precio - poc) / p30.precio;
+  const distToPoc = (p1h.precio - poc) / p1h.precio;
 
-  if (p30.precio < val && distToPoc < -0.01) {
+  if (p1h.precio < val && distToPoc < -0.01) {
     signal = "LONG";
     score = 60;
     prob = 45;
-    reasons.push(`Precio (${p30.precio.toFixed(8)}) bajo VAL (${val.toFixed(8)})`);
+    reasons.push(`Precio (${p1h.precio.toFixed(8)}) bajo VAL (${val.toFixed(8)})`);
     if (rsi15 < 40) { score += 10; prob += 8; reasons.push("RSI 15m sobrevendido"); }
     if (p15.precio < bb15.lower) { score += 10; prob += 7; reasons.push("Bajo BB 15m"); }
     if (p15.adx?.adx != null && p15.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
-  } else if (p30.precio > vah && distToPoc > 0.01) {
+  } else if (p1h.precio > vah && distToPoc > 0.01) {
     signal = "SHORT";
     score = 60;
     prob = 45;
-    reasons.push(`Precio (${p30.precio.toFixed(8)}) sobre VAH (${vah.toFixed(8)})`);
+    reasons.push(`Precio (${p1h.precio.toFixed(8)}) sobre VAH (${vah.toFixed(8)})`);
     if (rsi15 > 60) { score += 10; prob += 8; reasons.push("RSI 15m sobrecomprado"); }
     if (p15.precio > bb15.upper) { score += 10; prob += 7; reasons.push("Sobre BB 15m"); }
     if (p15.adx?.adx != null && p15.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
@@ -181,8 +181,8 @@ function vpMeanRevert(pool) {
 }
 
 function breakout(pool) {
-  const p30 = pool.p30, p15 = pool.p15;
-  if (!p30 || !p15) return null;
+  const p1h = pool.p1h, p15 = pool.p15;
+  if (!p1h || !p15) return null;
 
   const bb15 = p15.bb;
   const rsi15 = p15.rsi;
@@ -221,10 +221,10 @@ function breakout(pool) {
 }
 
 function liquidityGrab(pool) {
-  const p30 = pool.p30, p15 = pool.p15;
-  if (!p30 || !p15) return null;
+  const p1h = pool.p1h, p15 = pool.p15;
+  if (!p1h || !p15) return null;
 
-  const { lastHigh, lastLow } = calculatePivots(p30.high, p30.low, 3);
+  const { lastHigh, lastLow } = calculatePivots(p1h.high, p1h.low, 3);
   if (lastHigh == null && lastLow == null) return null;
   if (!p15.high || !p15.low || !p15.close || !p15.open) return null;
 
@@ -267,28 +267,28 @@ function liquidityGrab(pool) {
 }
 
 function rsiDivergence(pool) {
-  const p30 = pool.p30, p15 = pool.p15;
-  if (!p30 || !p15) return null;
+  const p1h = pool.p1h, p15 = pool.p15;
+  if (!p1h || !p15) return null;
 
-  const pivots30 = p30.pivots;
+  const pivots30 = p1h.pivots;
   if (!pivots30 || pivots30.lows.length < 2 || pivots30.highs.length < 2) return null;
 
   const rsiArr30 = [];
-  for (let i = 0; i < (p30.close?.length || 0); i++) {
-    const r = calculateRSI(p30.close.slice(0, i + 1), 14);
+  for (let i = 0; i < (p1h.close?.length || 0); i++) {
+    const r = calculateRSI(p1h.close.slice(0, i + 1), 14);
     rsiArr30.push(r);
   }
 
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
-  const totalBars = p30.close.length;
+  const totalBars = p1h.close.length;
 
   const lastTwoLows = pivots30.lows.slice(-2);
   if (lastTwoLows.length === 2 &&
       lastTwoLows[1].idx - lastTwoLows[0].idx >= 4 &&
       totalBars - lastTwoLows[1].idx <= 12) {
     const priceLowerLow = lastTwoLows[1].value < lastTwoLows[0].value;
-    const rsiVal1 = rsiArr30[lastTwoLows[0].idx] ?? p30.rsi;
-    const rsiVal2 = rsiArr30[lastTwoLows[1].idx] ?? p30.rsi;
+    const rsiVal1 = rsiArr30[lastTwoLows[0].idx] ?? p1h.rsi;
+    const rsiVal2 = rsiArr30[lastTwoLows[1].idx] ?? p1h.rsi;
     const rsiHigherLow = rsiVal1 != null && rsiVal2 != null && rsiVal2 > rsiVal1 && rsiVal2 < 50;
 
     if (priceLowerLow && rsiHigherLow) {
@@ -296,7 +296,7 @@ function rsiDivergence(pool) {
       score = 45;
       prob = 40;
       reasons.push(`Divergencia alcista: LL precio + HL RSI (RSI ${rsiVal2?.toFixed(1)})`);
-      const rsiNow = p15.rsi || p30.rsi;
+      const rsiNow = p15.rsi || p1h.rsi;
       if (rsiNow != null && rsiNow < 40) { score += 10; prob += 8; reasons.push("RSI 15m sobrevendido"); }
       if (p15.macd && p15.macd.histogram > 0) { score += 10; prob += 5; reasons.push("MACD 15m positivo"); }
       if (p15.bb && p15.precio <= p15.bb.middle) { score += 10; prob += 5; reasons.push("Bajo BB middle 15m"); }
@@ -310,8 +310,8 @@ function rsiDivergence(pool) {
         lastTwoHighs[1].idx - lastTwoHighs[0].idx >= 4 &&
         totalBars - lastTwoHighs[1].idx <= 12) {
       const priceHigherHigh = lastTwoHighs[1].value > lastTwoHighs[0].value;
-      const rsiVal1 = rsiArr30[lastTwoHighs[0].idx] ?? p30.rsi;
-      const rsiVal2 = rsiArr30[lastTwoHighs[1].idx] ?? p30.rsi;
+      const rsiVal1 = rsiArr30[lastTwoHighs[0].idx] ?? p1h.rsi;
+      const rsiVal2 = rsiArr30[lastTwoHighs[1].idx] ?? p1h.rsi;
       const rsiLowerHigh = rsiVal1 != null && rsiVal2 != null && rsiVal2 < rsiVal1 && rsiVal2 > 50;
 
       if (priceHigherHigh && rsiLowerHigh) {
@@ -319,7 +319,7 @@ function rsiDivergence(pool) {
         score = 45;
         prob = 40;
         reasons.push(`Divergencia bajista: HH precio + LH RSI (RSI ${rsiVal2?.toFixed(1)})`);
-        const rsiNow = p15.rsi || p30.rsi;
+        const rsiNow = p15.rsi || p1h.rsi;
         if (rsiNow != null && rsiNow > 60) { score += 10; prob += 8; reasons.push("RSI 15m sobrecomprado"); }
         if (p15.macd && p15.macd.histogram < 0) { score += 10; prob += 5; reasons.push("MACD 15m negativo"); }
         if (p15.bb && p15.precio >= p15.bb.middle) { score += 10; prob += 5; reasons.push("Sobre BB middle 15m"); }
@@ -340,9 +340,9 @@ const ALL_STRATEGIES = [
   rsiDivergence
 ];
 
-export function evaluateStrategies(ohlcv30m, ohlcv15m, pool = null) {
-  const dataPool = pool || buildIndicatorPool(ohlcv30m, ohlcv15m);
-  if (!dataPool.p30 || !dataPool.p15) return [];
+export function evaluateStrategies(ohlcv1h, ohlcv15m, pool = null) {
+  const dataPool = pool || buildIndicatorPool(ohlcv1h, ohlcv15m);
+  if (!dataPool.p1h || !dataPool.p15) return [];
 
   const results = [];
   for (const stratFn of ALL_STRATEGIES) {

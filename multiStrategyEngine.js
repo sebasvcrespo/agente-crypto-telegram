@@ -3,6 +3,7 @@ import { buildIndicatorPool, evaluateStrategies, rankCandidates } from "./strate
 import { calculateLevels, RISK_PERCENT } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
+  "BTC/USDT",
   "XRP/BTC",
   "ADA/BTC",
   "ORDI/BTC",
@@ -17,7 +18,7 @@ export const INTERNAL_MULTI_STRATEGY_LIST = [
 
 const PIONEX_INTERVALS = {
   "15m": "15M",
-  "30m": "30M"
+  "1h": "60M"
 };
 
 let bot = null;
@@ -40,8 +41,8 @@ function symbolToPionex(symbol) {
 
 async function fetchPionexKlines(symbol, interval, limit = null) {
   const pionexSymbol = symbolToPionex(symbol);
-  const pionexInterval = PIONEX_INTERVALS[interval] || "30M";
-  const effectiveLimit = limit || (interval === "30m" ? 450 : 100);
+  const pionexInterval = PIONEX_INTERVALS[interval] || "60M";
+  const effectiveLimit = limit || (interval === "15m" ? 100 : 450);
   const url = `https://api.pionex.com/api/v1/market/klines?symbol=${pionexSymbol}&interval=${pionexInterval}&limit=${effectiveLimit}`;
   const response = await axios.get(url, { timeout: 15000 });
   if (!response.data?.result || !response.data?.data?.klines) {
@@ -109,7 +110,7 @@ function formatWinnerMessage(w) {
     return "█".repeat(filled).padEnd(10, "░");
   };
 
-  let msg = `🧠 MULTI-ESTRATEGIA INTERNA (30M/15M)\n\n`;
+  let msg = `🧠 MULTI-ESTRATEGIA INTERNA (1H/15M)\n\n`;
   msg += `🏆 Par ganador: ${w.label}\n`;
   msg += `🎯 Estrategia ganadora: ${w.bestStrategy}\n`;
   msg += `📈 Dirección: ${w.direction} ${dirIcon}\n`;
@@ -156,23 +157,23 @@ function sendTelegram(text) {
 
 async function analyzePair(base, btcUsd) {
   const symbol = base.endsWith("/BTC") ? `${base.replace(/\/BTC$/, "")}/BTC:BTC` : `${base}/USDT:USDT`;
-  let data30 = [], data15 = [];
+  let data1h = [], data15 = [];
   try {
-    data30 = await fetchPionexKlines(symbol, "30m");
+    data1h = await fetchPionexKlines(symbol, "1h");
   } catch (e) {
-    throw new Error(`klines 30m ${e.message}`);
+    throw new Error(`klines 1h ${e.message}`);
   }
   try {
     data15 = await fetchPionexKlines(symbol, "15m");
   } catch (e) {
     throw new Error(`klines 15m ${e.message}`);
   }
-  if (!data30 || data30.length < 20 || !data15 || data15.length < 20) {
-    throw new Error(`datos insuficientes (30m=${data30?.length}, 15m=${data15?.length})`);
+  if (!data1h || data1h.length < 20 || !data15 || data15.length < 20) {
+    throw new Error(`datos insuficientes (1h=${data1h?.length}, 15m=${data15?.length})`);
   }
 
-  const pool = buildIndicatorPool(data30, data15);
-  const results = evaluateStrategies(data30, data15, pool);
+  const pool = buildIndicatorPool(data1h, data15);
+  const results = evaluateStrategies(data1h, data15, pool);
   const candidates = rankCandidates(results);
 
   if (!candidates.length) {
@@ -224,7 +225,7 @@ export async function runInternalMultiStrategy(force = false) {
     return;
   }
 
-  console.log("🔄 Iniciando análisis multi-estrategia INTERNO (10 pares base BTC, 30M contexto / 15M gatillo)...");
+  console.log("🔄 Iniciando análisis multi-estrategia INTERNO (11 pares, 1H contexto / 15M gatillo)...");
   const winners = [];
   const errors = [];
   let btcUsd = null;
@@ -253,7 +254,7 @@ export async function runInternalMultiStrategy(force = false) {
   try {
     let msg;
     if (!winners.length) {
-      msg = `🧠 MULTI-ESTRATEGIA INTERNA (30M/15M)\n\n❌ Sin oportunidades válidas`;
+      msg = `🧠 MULTI-ESTRATEGIA INTERNA (1H/15M)\n\n❌ Sin oportunidades válidas`;
       if (errors.length) {
         msg += "\n\n⚠️ Errores:";
         for (const e of errors) msg += `\n• ${e}`;

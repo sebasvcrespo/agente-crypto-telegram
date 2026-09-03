@@ -1492,19 +1492,21 @@ initInternalMultiStrategy(bot, () => chatId, () => botStatus);
 
 setCAPITAL_BTC(capitalBtc);
 
-cron.schedule("0 * * * *", () => {
-  console.log("⏰ Cron ejecutándose...");
-  runHourlyAnalysis().catch((err) => {
-    console.error("❌ Error en cron de análisis:", err.message);
-  });
-});
+// SUSPENDIDO: análisis horario BTC 1H desactivado por requerimiento del usuario
+// cron.schedule("0 * * * *", () => {
+//   console.log("⏰ Cron ejecutándose...");
+//   runHourlyAnalysis().catch((err) => {
+//     console.error("❌ Error en cron de análisis:", err.message);
+//   });
+// });
 
-cron.schedule("30 * * * *", () => {
-  console.log("⏰ Cron 30m ejecutándose...");
-  runHalfHourlyAnalysis().catch((err) => {
-    console.error("❌ Error en cron de análisis 30m:", err.message);
-  });
-});
+// SUSPENDIDO: análisis 30m BTC desactivado por requerimiento del usuario
+// cron.schedule("30 * * * *", () => {
+//   console.log("⏰ Cron 30m ejecutándose...");
+//   runHalfHourlyAnalysis().catch((err) => {
+//     console.error("❌ Error en cron de análisis 30m:", err.message);
+//   });
+// });
 
 function pairLabel(symbol) {
   return symbol.replace(/:(USDT|BTC)$/, "");
@@ -1667,20 +1669,23 @@ async function runSinglePairScan(rawInput) {
   }
 }
 
-cron.schedule("0,30 * * * *", () => {
-  setTimeout(() => {
-    console.log("⏰ Cron multi-par ejecutándose...");
-    runMultiPairScan().catch((err) => {
-      console.error("❌ Error en cron multi-par:", err.message);
-    });
-  }, 30000);
-});
+// SUSPENDIDO: escaneo multi-par 30m desactivado por requerimiento del usuario
+// cron.schedule("0,30 * * * *", () => {
+//   setTimeout(() => {
+//     console.log("⏰ Cron multi-par ejecutándose...");
+//     runMultiPairScan().catch((err) => {
+//       console.error("❌ Error en cron multi-par:", err.message);
+//     });
+//   }, 30000);
+// });
 
-cron.schedule("1,31 * * * *", () => {
-  console.log("⏰ Cron multi-estrategia interna ejecutándose...");
-  runInternalMultiStrategy().catch((err) => {
-    console.error("❌ Error en cron multi-estrategia interna:", err.message);
-  });
+cron.schedule("0,15,30,45 * * * *", () => {
+  setTimeout(() => {
+    console.log("⏰ Cron multi-estrategia interna ejecutándose (20s después del cierre de la vela 15m)...");
+    runInternalMultiStrategy().catch((err) => {
+      console.error("❌ Error en cron multi-estrategia interna:", err.message);
+    });
+  }, 20000);
 });
 
 const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL;
@@ -1705,10 +1710,10 @@ bot.command("start", async (ctx) => {
       "*Comandos básicos:*\n" +
       "• `/PAR` — Analiza cualquier par con contexto BTC (ej: `/ETH`, `/BTC`)\n" +
       "• `/PAR TF` — Todos los indicadores en una temporalidad (ej: `/ETH 1h`, `/ADA 4h`)\n" +
-      "• `Abierto` — Activa las alertas automáticas (BTC 1H, BTC 30M, multi-par y multi-estrategia interna)\n" +
-      "• `Cerrado` — Pausa las alertas automáticas\n" +
+      "• `Abierto` — Activa la alerta automática multi-estrategia interna\n" +
+      "• `Cerrado` — Pausa la alerta automática\n" +
       "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
-      "• `Estrategia` — Multi-estrategia interna manual inmediata (10 pares base BTC, 30M/5M)\n" +
+      "• `Estrategia` — Multi-estrategia interna manual inmediata (11 pares, 1H/15M)\n" +
       "• `/aumentocapital` — Actualiza el capital BTC disponible\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
@@ -1756,9 +1761,9 @@ bot.command("help", async (ctx) => {
     "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT\n" +
     "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros\n\n" +
     "*Alertas automáticas:*\n" +
-    "• `Abierto` — Activa (BTC 1H, BTC 30M, multi-par, multi-estrategia interna)\n" +
+    "• `Abierto` — Activa la alerta multi-estrategia interna (cada 15 min, 20s después del cierre de la vela)\n" +
     "• `Cerrado` — Pausa\n" +
-    "• `Estrategia` — Multi-estrategia interna manual inmediata (10 pares base BTC, 30M/5M)\n" +
+    "• `Estrategia` — Multi-estrategia interna manual inmediata (11 pares, 1H/15M)\n" +
     "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
     "• `/aumentocapital 0.00020` — Actualiza el capital BTC disponible para el dimensionado de posiciones\n\n" +
     "*Fuentes:* `Bitget`, `Pionex`\n" +
@@ -1861,7 +1866,7 @@ bot.on("message:text", async (ctx) => {
 
     if (text === "abierto") {
       setBotStatus("Abierto");
-      await ctx.reply("🔓 *Modo Abierto* — Alertas activadas.\n\nRecibirás los análisis automáticos: BTC 1H (min 0), BTC 30M (min 30), escaneo multi-par base BTC (min 0 y 30 +30s) y multi-estrategia interna (min 1 y 31). Escribe *Cerrado* para pausarlas.", { parse_mode: "Markdown" });
+      await ctx.reply("🔓 *Modo Abierto* — Alertas activadas.\n\nSolo recibe el análisis automático de multi-estrategia interna (11 pares, 1H/15M, a los :00/:15/:30/:45 +20s). Escribe *Cerrado* para pausarlas.", { parse_mode: "Markdown" });
       console.log("🔓 Bot status cambiado a: Abierto");
       return;
     }
@@ -1905,7 +1910,7 @@ bot.on("message:text", async (ctx) => {
         await ctx.reply("⚠️ Aún no tengo registrado tu chat. Escribí *Abierto* primero.", { parse_mode: "Markdown" });
         return;
       }
-      await ctx.reply("🧠 Ejecutando análisis multi-estrategia interno (10 pares base BTC, 30M/15M)...\n\nToma ~20 segundos.");
+      await ctx.reply("🧠 Ejecutando análisis multi-estrategia interno (11 pares, 1H/15M)...\n\nToma ~25 segundos.");
       runInternalMultiStrategy(true).catch(async (err) => {
         console.error("❌ Error en multi-estrategia manual:", err.message);
         await ctx.reply(`⚠️ Error en multi-estrategia manual: ${err.message}`);
