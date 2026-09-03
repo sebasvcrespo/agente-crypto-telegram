@@ -1,5 +1,5 @@
 let CAPITAL_BTC = 0.00010;
-const RISK_PERCENT = 0.066;
+const RISK_PERCENT = 0.10;
 const MAX_LEVERAGE = 10;
 
 function calcRiskBtc() {
@@ -27,20 +27,17 @@ function volatilityCategory(symbol) {
   return "MED";
 }
 
-export function calculateLevels(entryPrice, atr, direction, symbol) {
-  if (!entryPrice || !atr || atr <= 0) return null;
+export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlPrice) {
+  if (!entryPrice || !suggestedSlPrice) return null;
 
   const isLong = direction === "LONG";
-  const volatility = volatilityCategory(symbol);
-  const slAtrMult = SL_ATR_MULT[volatility];
-
-  const slDistance = slAtrMult * atr;
+  const slDistance = Math.abs(entryPrice - suggestedSlPrice);
   const r = slDistance;
   const tp1Mult = 1.0;
   const tp2Mult = 1.7;
   const tp3Mult = 2.5;
 
-  const sl = isLong ? entryPrice - slDistance : entryPrice + slDistance;
+  const sl = suggestedSlPrice;
   const tp1 = isLong ? entryPrice + tp1Mult * r : entryPrice - tp1Mult * r;
   const tp2 = isLong ? entryPrice + tp2Mult * r : entryPrice - tp2Mult * r;
   const tp3 = isLong ? entryPrice + tp3Mult * r : entryPrice - tp3Mult * r;
@@ -48,7 +45,7 @@ export function calculateLevels(entryPrice, atr, direction, symbol) {
   if (slDistance <= 0) return null;
 
   const slDistancePct = slDistance / entryPrice;
-  const riskBtc = calcRiskBtc();
+  const riskBtc = CAPITAL_BTC * RISK_PERCENT;
   const idealNotional = riskBtc / slDistancePct;
   const maxNotional = MAX_LEVERAGE * CAPITAL_BTC;
   const notionalBtc = Math.min(idealNotional, maxNotional);
@@ -69,8 +66,8 @@ export function calculateLevels(entryPrice, atr, direction, symbol) {
     riskCapped,
     slDistanceBtc: slDistance,
     slDistancePct: (slDistancePct * 100).toFixed(2),
-    volatility,
-    slAtrMult
+    volatility: volatilityCategory(symbol),
+    slAtrMult: (slDistance / (atr || 1)).toFixed(2)
   };
 }
 

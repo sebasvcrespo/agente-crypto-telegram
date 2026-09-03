@@ -1679,9 +1679,9 @@ async function runSinglePairScan(rawInput) {
 //   }, 30000);
 // });
 
-cron.schedule("0,15,30,45 * * * *", () => {
+cron.schedule("0 * * * *", () => {
   setTimeout(() => {
-    console.log("⏰ Cron multi-estrategia interna ejecutándose (20s después del cierre de la vela 15m)...");
+    console.log("⏰ Cron multi-estrategia interna ejecutándose (20s después del cierre de la vela 1H)...");
     runInternalMultiStrategy().catch((err) => {
       console.error("❌ Error en cron multi-estrategia interna:", err.message);
     });
@@ -1714,7 +1714,7 @@ bot.command("start", async (ctx) => {
       "• `Cerrado` — Pausa la alerta automática\n" +
       "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
       "• `Estrategia` — Multi-estrategia interna manual inmediata (11 pares, 1H/15M)\n" +
-      "• `/aumentocapital` — Actualiza el capital BTC disponible\n\n" +
+      "• `/aumentocapital` — Actualiza el capital BTC disponible (riesgo = 10% del capital)\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
       "• `/PAR FUENTE DIRECCION` — Bot+Futuros con fuente (ej: `/ETH Pionex Long`, `/BTC Bitget Short`)\n" +
@@ -1761,11 +1761,11 @@ bot.command("help", async (ctx) => {
     "• `/ETH FUTUROS SHORT` — Configuración futuros SHORT\n" +
     "• `/ETH BOT O FUTUROS LONG` — Compara bot vs futuros\n\n" +
     "*Alertas automáticas:*\n" +
-    "• `Abierto` — Activa la alerta multi-estrategia interna (cada 15 min, 20s después del cierre de la vela)\n" +
+    "• `Abierto` — Activa la alerta multi-estrategia interna (cada hora, 20s después del cierre de la vela 1H)\n" +
     "• `Cerrado` — Pausa\n" +
     "• `Estrategia` — Multi-estrategia interna manual inmediata (11 pares, 1H/15M)\n" +
     "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
-    "• `/aumentocapital 0.00020` — Actualiza el capital BTC disponible para el dimensionado de posiciones\n\n" +
+    "• `/aumentocapital 0.00020` — Actualiza el capital BTC disponible (riesgo = 10% del capital)\n\n" +
     "*Fuentes:* `Bitget`, `Pionex`\n" +
     "*Temporalidades:* 15m, 30m, 1h, 2h, 4h",
     { parse_mode: "Markdown" }
@@ -1781,7 +1781,7 @@ bot.command("aumentocapital", async (ctx) => {
         `⚠️ Formato inválido.\n\n` +
         `Uso: \`/aumentocapital 0.00020\`\n\n` +
         `Capital actual disponible: *${getCapitalBtc().toFixed(8)} BTC*\n` +
-        `Riesgo por trade: *6.6%* del capital (máx 10x de apalancamiento).`,
+        `Riesgo por trade: *10%* del capital (máx 10x de apalancamiento).`,
         { parse_mode: "Markdown" }
       );
       return;
@@ -1794,7 +1794,7 @@ bot.command("aumentocapital", async (ctx) => {
     setCapitalBtc(value);
     await ctx.reply(
       `✅ *Capital actualizado* a *${getCapitalBtc().toFixed(8)} BTC*.\n\n` +
-      `Los próximos trades (multi-estrategia interna) usarán este nuevo capital disponible para dimensionar el nocional, siempre respetando el riesgo del 6.6% del capital y el tope de 10x de apalancamiento.`,
+      `Los próximos trades (multi-estrategia interna) usarán este nuevo capital disponible para dimensionar el nocional, siempre respetando el riesgo del 10% del capital y el tope de 10x de apalancamiento.`,
       { parse_mode: "Markdown" }
     );
     console.log("💰 Capital actualizado a:", getCapitalBtc());
@@ -1866,7 +1866,7 @@ bot.on("message:text", async (ctx) => {
 
     if (text === "abierto") {
       setBotStatus("Abierto");
-      await ctx.reply("🔓 *Modo Abierto* — Alertas activadas.\n\nSolo recibe el análisis automático de multi-estrategia interna (11 pares, 1H/15M, a los :00/:15/:30/:45 +20s). Escribe *Cerrado* para pausarlas.", { parse_mode: "Markdown" });
+      await ctx.reply("🔓 *Modo Abierto* — Alertas activadas.\n\nSolo recibe el análisis automático de multi-estrategia interna (11 pares, 1H/15M, a los :00 +20s). Escribe *Cerrado* para pausarlas.", { parse_mode: "Markdown" });
       console.log("🔓 Bot status cambiado a: Abierto");
       return;
     }

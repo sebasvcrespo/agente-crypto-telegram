@@ -97,7 +97,7 @@ function smcReversal(pool) {
     if (p15.macd && p15.macd.histogram < 0) { score += 10; prob += 5; reasons.push("MACD histogram negativo"); }
   }
 
-  return { strategy: "SMC_Reversal", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
+  return { strategy: "SMC_Reversal", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice: signal === "LONG" ? (lastLow || p1h.precio * 0.98) : (lastHigh || p1h.precio * 1.02) };
 }
 
 function trendPullback(pool) {
@@ -143,7 +143,7 @@ function trendPullback(pool) {
     }
   }
 
-  return { strategy: "Trend_Pullback", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
+  return { strategy: "Trend_Pullback", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice: signal === "LONG" ? (p1h.ema50 || p1h.precio * 0.98) : (p1h.ema50 || p1h.precio * 1.02) };
 }
 
 function vpMeanRevert(pool) {
@@ -177,7 +177,7 @@ function vpMeanRevert(pool) {
     if (p15.adx?.adx != null && p15.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
   }
 
-  return { strategy: "VP_Mean_Revert", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
+  return { strategy: "VP_Mean_Revert", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice: signal === "LONG" ? (val || p1h.precio * 0.98) : (vah || p1h.precio * 1.02) };
 }
 
 function breakout(pool) {
@@ -217,7 +217,7 @@ function breakout(pool) {
     if (p15.adx?.adx != null && p15.adx.adx > 20) { score += 10; prob += 5; reasons.push("ADX confirmado"); }
   }
 
-  return { strategy: "Breakout", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
+  return { strategy: "Breakout", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice: signal === "LONG" ? (bb15.middle || p15.precio * 0.98) : (bb15.middle || p15.precio * 1.02) };
 }
 
 function liquidityGrab(pool) {
@@ -263,7 +263,7 @@ function liquidityGrab(pool) {
     }
   }
 
-  return { strategy: "Liquidity_Grab", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
+  return { strategy: "Liquidity_Grab", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice: signal === "LONG" ? (lastLow15 || p15.precio * 0.98) : (lastHigh15 || p15.precio * 1.02) };
 }
 
 function rsiDivergence(pool) {
@@ -314,7 +314,7 @@ function rsiDivergence(pool) {
       const rsiVal2 = rsiArr30[lastTwoHighs[1].idx] ?? p1h.rsi;
       const rsiLowerHigh = rsiVal1 != null && rsiVal2 != null && rsiVal2 < rsiVal1 && rsiVal2 > 50;
 
-      if (priceHigherHigh && rsiLowerHigh) {
+        if (priceHigherHigh && rsiLowerHigh) {
         signal = "SHORT";
         score = 45;
         prob = 40;
@@ -328,8 +328,9 @@ function rsiDivergence(pool) {
     }
   }
 
-  return { strategy: "RSI_Divergence", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons };
+  return { strategy: "RSI_Divergence", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice: signal === "LONG" ? (pivots30.lows[pivots30.lows.length - 1].value || p1h.precio * 0.98) : (pivots30.highs[pivots30.highs.length - 1].value || p1h.precio * 1.02) };
 }
+
 
 const ALL_STRATEGIES = [
   smcReversal,
@@ -374,9 +375,10 @@ export function rankCandidates(results) {
     candidates.push({
       direction: "LONG",
       bestStrategy: bestLong.strategy,
+      bestSlPrice: bestLong.suggestedSlPrice,
       score: Math.min(Math.round(avgScore + ensembleBonus), 100),
       probability: Math.min(Math.round(avgProb + ensembleBonus), 100),
-      allStrategies: longs.map((r) => ({ strategy: r.strategy, score: r.score, prob: r.prob, reasons: r.reasons }))
+      allStrategies: longs.map((r) => ({ strategy: r.strategy, score: r.score, prob: r.prob, reasons: r.reasons, suggestedSlPrice: r.suggestedSlPrice }))
     });
   }
 
@@ -388,9 +390,10 @@ export function rankCandidates(results) {
     candidates.push({
       direction: "SHORT",
       bestStrategy: bestShort.strategy,
+      bestSlPrice: bestShort.suggestedSlPrice,
       score: Math.min(Math.round(avgScore + ensembleBonus), 100),
       probability: Math.min(Math.round(avgProb + ensembleBonus), 100),
-      allStrategies: shorts.map((r) => ({ strategy: r.strategy, score: r.score, prob: r.prob, reasons: r.reasons }))
+      allStrategies: shorts.map((r) => ({ strategy: r.strategy, score: r.score, prob: r.prob, reasons: r.reasons, suggestedSlPrice: r.suggestedSlPrice }))
     });
   }
 

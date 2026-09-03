@@ -183,7 +183,7 @@ async function analyzePair(base, btcUsd) {
   const best = candidates[0];
   const atr15 = pool.p15.atr;
   const entry = pool.p15.precio;
-  const levels = calculateLevels(entry, atr15, best.direction, symbol);
+  const levels = calculateLevels(entry, atr15, best.direction, symbol, best.bestSlPrice);
 
   if (!levels) {
     return { base, label: pairLabel(symbol), trade: false };
