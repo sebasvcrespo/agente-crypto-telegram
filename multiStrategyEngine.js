@@ -156,7 +156,14 @@ function sendTelegram(text) {
 }
 
 async function analyzePair(base, btcUsd) {
-  const symbol = base.endsWith("/BTC") ? `${base.replace(/\/BTC$/, "")}/BTC:BTC` : `${base}/USDT:USDT`;
+  let symbol;
+  if (base.endsWith("/BTC")) {
+    symbol = `${base.replace(/\/BTC$/, "")}/BTC:BTC`;
+  } else if (base.endsWith("/USDT")) {
+    symbol = `${base}:USDT`;
+  } else {
+    symbol = `${base}/USDT:USDT`;
+  }
   let data1h = [], data15 = [];
   try {
     data1h = await fetchPionexKlines(symbol, "1h");
