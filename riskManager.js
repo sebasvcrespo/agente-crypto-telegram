@@ -1,6 +1,7 @@
 let CAPITAL_BTC = 0.00010;
 const RISK_PERCENT = 0.10;
 const MAX_LEVERAGE = 10;
+const FEE_TOTAL = 0.01;
 
 function calcRiskBtc() {
   return CAPITAL_BTC * RISK_PERCENT;
@@ -44,13 +45,17 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
 
   if (slDistance <= 0) return null;
 
+  const tp1Distance = Math.abs(tp1 - entryPrice);
+  if (tp1Distance / entryPrice < FEE_TOTAL) return null;
+
   const slDistancePct = slDistance / entryPrice;
   const riskBtc = CAPITAL_BTC * RISK_PERCENT;
-  const idealNotional = riskBtc / slDistancePct;
+  const riskPctTotal = slDistancePct + FEE_TOTAL;
+  const idealNotional = riskBtc / riskPctTotal;
   const maxNotional = MAX_LEVERAGE * CAPITAL_BTC;
   const notionalBtc = Math.min(idealNotional, maxNotional);
   const leverage = Math.max(1, Math.ceil(notionalBtc / CAPITAL_BTC));
-  const actualRisk = notionalBtc * slDistancePct;
+  const actualRisk = notionalBtc * riskPctTotal;
   const riskCapped = actualRisk < riskBtc - 1e-12;
 
   return {
@@ -71,4 +76,4 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
   };
 }
 
-export { CAPITAL_BTC, RISK_PERCENT, MAX_LEVERAGE };
+export { CAPITAL_BTC, RISK_PERCENT, MAX_LEVERAGE, FEE_TOTAL };

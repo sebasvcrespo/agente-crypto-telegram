@@ -1,6 +1,6 @@
 import axios from "axios";
 import { buildIndicatorPool, evaluateStrategies, rankCandidates } from "./strategies.js";
-import { calculateLevels, RISK_PERCENT } from "./riskManager.js";
+import { calculateLevels, RISK_PERCENT, FEE_TOTAL } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
   "BTC/USDT",
@@ -121,6 +121,7 @@ function formatWinnerMessage(w) {
   msg += `🎯 TP1 (33%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
   msg += `🎯 TP2 (33%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
   msg += `🎯 TP3 (34%): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3, w.direction)})\n\n`;
+  msg += `💸 Comisiones Pionex 1% (0.5% apertura + 0.5% cierre) contempladas: TP1 neto ≥ 0% y riesgo SL real dentro del 10%\n`;
   msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx 10x)${w.levels.exchangeMax ? ` — exchange ${w.levels.exchangeMax}x` : ""}\n`;
   msg += `📊 Riesgo (${(RISK_PERCENT * 100).toFixed(1)}% de capital): ${w.levels.riskBtc.toFixed(8)} BTC — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n`;
   if (w.levels.riskCapped) msg += `⚠️ Riesgo reducido por tope de 10x y capital disponible\n\n`;
@@ -193,7 +194,15 @@ async function analyzePair(base, btcUsd) {
   const levels = calculateLevels(entry, atr15, best.direction, symbol, best.bestSlPrice);
 
   if (!levels) {
-    return { base, label: pairLabel(symbol), trade: false };
+    const sl = best.bestSlPrice;
+    let reason = "niveles inválidos";
+    if (entry && sl) {
+      const r = Math.abs(entry - sl);
+      if (r > 0 && r / entry < FEE_TOTAL) {
+        reason = "TP1 no cubre las comisiones de Pionex (1% apertura+cierre)";
+      }
+    }
+    return { base, label: pairLabel(symbol), trade: false, reason };
   }
 
   let exchangeMax = null;
@@ -234,6 +243,7 @@ export async function runInternalMultiStrategy(force = false) {
 
   console.log("🔄 Iniciando análisis multi-estrategia INTERNO (11 pares, 1H contexto / 15M gatillo)...");
   const winners = [];
+  const skipped = [];
   const errors = [];
   let btcUsd = null;
   try {
@@ -248,6 +258,9 @@ export async function runInternalMultiStrategy(force = false) {
       if (res.trade) {
         winners.push(res);
         console.log(`✅ ${res.label}: ${res.bestStrategy} ${res.direction} Score=${res.score} Prob=${res.probability}`);
+      } else if (res.reason) {
+        skipped.push(`${res.label} → ${res.reason}`);
+        console.log(`🚫 ${res.label}: ${res.reason}`);
       } else {
         console.log(`🚫 ${base}: sin señal válida`);
       }
@@ -262,6 +275,10 @@ export async function runInternalMultiStrategy(force = false) {
     let msg;
     if (!winners.length) {
       msg = `🧠 MULTI-ESTRATEGIA INTERNA (1H/15M)\n\n❌ Sin oportunidades válidas`;
+      if (skipped.length) {
+        msg += "\n\n🚫 Señales descartadas:";
+        for (const s of skipped) msg += `\n• ${s}`;
+      }
       if (errors.length) {
         msg += "\n\n⚠️ Errores:";
         for (const e of errors) msg += `\n• ${e}`;
@@ -270,6 +287,10 @@ export async function runInternalMultiStrategy(force = false) {
       winners.sort((a, b) => b.score - a.score);
       const best = winners[0];
       msg = formatWinnerMessage(best);
+      if (skipped.length) {
+        msg += `\n\n🚫 Otras señales descartadas:`;
+        for (const s of skipped) msg += `\n• ${s}`;
+      }
       if (errors.length) {
         msg += `\n\n⚠️ Errores en otros pares:`;
         for (const e of errors) msg += `\n• ${e}`;
