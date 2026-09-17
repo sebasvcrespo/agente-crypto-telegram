@@ -13,7 +13,8 @@ export const INTERNAL_MULTI_STRATEGY_LIST = [
   "SOL/BTC",
   "PAXG/BTC",
   "ETH/BTC",
-  "BNB/BTC"
+  "BNB/BTC",
+  "MSTRX/BTC"
 ];
 
 const PIONEX_INTERVALS = {

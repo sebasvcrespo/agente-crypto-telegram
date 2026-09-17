@@ -248,7 +248,7 @@ function formatFundingText(funding) {
 
 const MAJOR_COINS = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "LINK", "AVAX", "TON", "TRX", "LTC", "DOT", "BCH"];
 
-const MULTI_PAIR_LIST = ["XRP/BTC", "ADA/BTC", "ORDI/BTC", "LINK/BTC", "SUI/BTC", "DOGE/BTC", "SOL/BTC", "PAXG/BTC", "ETH/BTC", "BNB/BTC"];
+const MULTI_PAIR_LIST = ["XRP/BTC", "ADA/BTC", "ORDI/BTC", "LINK/BTC", "SUI/BTC", "DOGE/BTC", "SOL/BTC", "PAXG/BTC", "ETH/BTC", "BNB/BTC", "MSTRX/BTC"];
 
 function evaluateScreener(pairIndicators, ticker, direction, isMajor = false) {
   const dir = (direction || "").toUpperCase();
