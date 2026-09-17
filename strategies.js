@@ -177,7 +177,21 @@ function vpMeanRevert(pool) {
     if (p15.adx?.adx != null && p15.adx.adx < 20) { score += 10; prob += 5; reasons.push("ADX bajo (rango)"); }
   }
 
-  return { strategy: "VP_Mean_Revert", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice: signal === "LONG" ? (val || p1h.precio * 0.98) : (vah || p1h.precio * 1.02) };
+  const { lastHigh, lastLow } = calculatePivots(p1h.high, p1h.low, 3);
+  let suggestedSlPrice = p1h.precio;
+  if (signal === "LONG") {
+    if (lastLow != null && lastLow < p15.precio) suggestedSlPrice = lastLow;
+    else if (bb15.lower != null && bb15.lower < p15.precio) suggestedSlPrice = bb15.lower;
+    else if (p15.atr) suggestedSlPrice = p15.precio - 1.5 * p15.atr;
+    else suggestedSlPrice = p15.precio * 0.985;
+  } else if (signal === "SHORT") {
+    if (lastHigh != null && lastHigh > p15.precio) suggestedSlPrice = lastHigh;
+    else if (bb15.upper != null && bb15.upper > p15.precio) suggestedSlPrice = bb15.upper;
+    else if (p15.atr) suggestedSlPrice = p15.precio + 1.5 * p15.atr;
+    else suggestedSlPrice = p15.precio * 1.015;
+  }
+
+  return { strategy: "VP_Mean_Revert", signal, score: Math.min(score, 100), prob: Math.min(prob, 100), reasons, suggestedSlPrice };
 }
 
 function breakout(pool) {

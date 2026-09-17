@@ -43,7 +43,8 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
   const tp2 = isLong ? entryPrice + tp2Mult * r : entryPrice - tp2Mult * r;
   const tp3 = isLong ? entryPrice + tp3Mult * r : entryPrice - tp3Mult * r;
 
-  if (slDistance <= 0) return null;
+  const validSlSide = isLong ? sl < entryPrice : sl > entryPrice;
+  if (!validSlSide || slDistance <= 0) return null;
 
   const tp1Distance = Math.abs(tp1 - entryPrice);
   if (tp1Distance / entryPrice < FEE_TOTAL) return null;
