@@ -50,6 +50,8 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
   if (tp1Distance / entryPrice < FEE_TOTAL) return null;
 
   const slDistancePct = slDistance / entryPrice;
+  if (slDistancePct < 0.01 || slDistancePct > 0.03) return null;
+
   const riskBtc = CAPITAL_BTC * RISK_PERCENT;
   const riskPctTotal = slDistancePct + FEE_TOTAL;
   const idealNotional = riskBtc / riskPctTotal;
