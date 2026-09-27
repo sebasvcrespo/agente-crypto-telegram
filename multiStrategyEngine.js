@@ -1,5 +1,5 @@
 import axios from "axios";
-import { buildIndicatorPool, evaluateStrategies, rankCandidates } from "./strategies.js";
+import { buildIndicatorPool, classifyMarketState, evaluateStrategies, rankCandidates } from "./strategies.js";
 import { calculateLevels, RISK_PERCENT, FEE_TOTAL } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
@@ -104,6 +104,15 @@ function pct(entry, level, direction) {
   return `${signed.toFixed(3)}%`;
 }
 
+function formatMarketState(ms) {
+  if (!ms || !ms.state) return "";
+  const icon = ms.state === "trending" ? "📈" : ms.state === "lateral" ? "↔️" : "🟡";
+  const label = { trending: "TENDENCIA", lateral: "LATERAL", transitional: "TRANSICIONAL" }[ms.state] || ms.state;
+  const dir = ms.direction && ms.direction !== "neutral" ? ` ${ms.direction === "bullish" ? "alcista 🟢" : "bajista 🔴"}` : "";
+  const adxTxt = ms.adx != null ? ` | ADX(1H) ${ms.adx.toFixed(1)}` : "";
+  return `${icon} Contexto 1H: ${label}${dir}${adxTxt}\n`;
+}
+
 function formatWinnerMessage(w) {
   const dirIcon = w.direction === "LONG" ? "🟢" : w.direction === "SHORT" ? "🔴" : "⚪";
   const bar = (score) => {
@@ -113,6 +122,7 @@ function formatWinnerMessage(w) {
 
   let msg = `🧠 MULTI-ESTRATEGIA INTERNA (1H/15M)\n\n`;
   msg += `🏆 Par ganador: ${w.label}\n`;
+  msg += `${formatMarketState(w.marketState)}`;
   msg += `🎯 Estrategia ganadora: ${w.bestStrategy}\n`;
   msg += `📈 Dirección: ${w.direction} ${dirIcon}\n`;
   msg += `⭐ Score: ${w.score} ${bar(w.score)}\n`;
@@ -182,8 +192,9 @@ async function analyzePair(base, btcUsd) {
   }
 
   const pool = buildIndicatorPool(data1h, data15);
+  const marketState = classifyMarketState(pool);
   const results = evaluateStrategies(data1h, data15, pool);
-  const candidates = rankCandidates(results);
+  const candidates = rankCandidates(results, marketState);
 
   if (!candidates.length) {
     return { base, label: pairLabel(symbol), trade: false };
@@ -231,6 +242,7 @@ async function analyzePair(base, btcUsd) {
     bestStrategy: best.bestStrategy,
     score: best.score,
     probability: best.probability,
+    marketState,
     levels,
     confluences: best.allStrategies
   };

@@ -120,9 +120,11 @@ Bitget:     "EVAA/USDT:USDT"  (formato ccxt estándar)
 - Temporalidades: **1H = contexto/zona (450 velas → soporta EMA200), 15M = gatillo/entrada (100 velas)**. El ATR/SL/TP se calcula sobre ATR(15m).
 - Pool centralizado de indicadores (`buildIndicatorPool(ohlcv1h, ohlcv15m)` en `strategies.js`): BB, RSI, ADX, ATR, EMA20/50/200, MACD, pivotes (swing highs/lows) y Volume Profile (POC/VAH/VAL) sobre 1h y 15m (pool keys `p1h` y `p15`). Patrón de consumo idéntico a `comentarios.txt`: cada estrategia toma el subconjunto que necesita.
 - 6 estrategias (`SMC_Reversal`, `Trend_Pullback`, `VP_Mean_Revert`, `Breakout`, `Liquidity_Grab`, `RSI_Divergence`). Cada una asigna su propio score+probabilidad con su lógica `analyze()` y un **`suggestedSlPrice`** basado en la estructura técnica del setup; mínimo `MIN_SCORE=60`. La divergencia RSI requiere pivots recientes (≤12 velas) y espaciados (≥4 velas). **Importante `VP_Mean_Revert`:** su objetivo es POC/VAH-VAL (el precio debe REVERTIR hacia la zona de valor), por lo que **NO** usa `val`/`vah` como SL (quedaba del lado incorrecto y generaba `SL == TP1`). El SL lo calcula del lado correcto con: pivot swing 1H (LONG: `lastLow` < entrada; SHORT: `lastHigh` > entrada) → BB 15m → 1.5×ATR(15m) → fallback 1.5%.
-- `rankCandidates`: agrupa por dirección, aplica **Ensemble Bonus +5 pts por estrategia confluente** y ordena por score. El mejor par gana y lleva su `bestSlPrice` al riskManager; el resto reporta como confluencias.
+- `classifyMarketState(pool)` (export en `strategies.js`): clasifica el **contexto 1H** de cada par en base al ADX(1H) — **trending** (> `ADX_TRENDING`=22), **transitional** (18–22) o **lateral** (< `ADX_LATERAL`=18). En `trending` determina además la dirección (`bullish`/`bearish`) por el orden de EMAs 20>50>200 (o inverso); si falta ADX o EMAs → `unknown`/`neutral`. El mismo `ADX_TRENDING` (22) se usa como umbral de tendencia en `trendPullback` (antes 25).
+- `applyContextBonus(results, marketState)`: otorga **+5 pts (score y prob, tope 100)** a las estrategias **primarias** del estado y **+2 pts** al resto (`PRIMARY_BY_STATE`: trending → `Trend_Pullback`/`Breakout`; lateral → `VP_Mean_Revert`/`SMC_Reversal`; transitional → sin primarias). Los estados `unknown`/`transitional` no modifican los scores. El bonus se aplica **antes** del ranking y del filtro `MIN_SCORE`.
+- `rankCandidates(results, marketState = null)`: agrupa por dirección, aplica el **bonus de contexto** y luego el **Ensemble Bonus +5 pts por estrategia confluente**, y ordena por score. El mejor par gana y lleva su `bestSlPrice` al riskManager; el resto reporta como confluencias.
 - `riskManager.calculateLevels`: **SL dinámico según la distancia entry→suggestedSlPrice** (proveniente de la estrategia ganadora). R = distancia SL; **TP1=1R, TP2=1.7R, TP3=2.5R** (33/33/34%). **Guarda de lado:** si el SL no queda del lado correcto (LONG: `sl < entry`, SHORT: `sl > entry`) → devuelve `null` y el trade se invalida (evita que SL coincida con TP1). **Comisiones Pionex `FEE_TOTAL=1%` (0.5% apertura + 0.5% cierre) contempladas:** si la distancia TP1 (1R) no cubre el 1% → `calculateLevels` devuelve `null` y el trade se **invalida** (la IA nunca sugiere operar con TP1 neto ≤ 0). El dimensionamiento usa `idealNotional = riskBtc / (slDistancePct + FEE_TOTAL)` para que un SL completo (incl. fees) nunca supere el 10% de riesgo. **Riesgo porcentual por trade = 10%** del capital (`RISK_PERCENT`) → `riskBtc = CAPITAL_BTC × RISK_PERCENT`. **Capital BTC disponible** (`CAPITAL_BTC`, default 0.00010, configurable vía `/aumentocapital`) → `maxNotional = MAX_LEVERAGE × CAPITAL_BTC` (MAX_LEVERAGE = **10x**), `notional = min(ideal, max)`. Si el tope de 10x limita el tamaño, `riskCapped=true` y el riesgo real queda **por debajo** del 10% (seguridad ante todo). El leverage se valida además contra el max leverage real de Pionex por nocional.
-- Mensaje Telegram: par ganador, estrategia ganadora, score, probabilidad, entrada/SL/TP1-3 en BTC, apalancamiento sugerido (tope 10x + exchange) y confluencias.
+- Mensaje Telegram: par ganador, estrategia ganadora, score, probabilidad, entrada/SL/TP1-3 en BTC, apalancamiento sugerido (tope 10x + exchange) y confluencias. Incluye la línea de contexto de `formatMarketState()` (`📈 Contexto 1H: TENDENCIA/LATERAL/TRANSICIONAL + dirección + ADX(1H)`) sobre el par ganador.
 
 ## Gate duro del Screener (`evaluateScreener`)
 
@@ -189,10 +191,10 @@ node index.js > log.txt 2>&1 &
 
 ## Despliegue
 
-- **Plataforma:** Render (auto-deploy desde `origin/main`)
+- **Plataforma:** Render (`agente-crypto-telegram-ova6.onrender.com`, service `srv-d9dp6s6rnols73cu3on0`)
 - **Repo:** `https://github.com/sebasvcrespo/agente-crypto-telegram.git`
 - **Branch:** `main`
-- Al hacer push a main, Render despliega automáticamente
+- **Auto-Deploy DESACTIVADO** (`autoDeployTrigger: off`): el `git push` **no** dispara deploy. El deploy se dispara **únicamente** con el webhook del proyecto (1 webhook = 1 deploy). Verificar antes de disparar que no exista ya un deploy para el commit de `HEAD`.
 
 ## Errores comunes
 

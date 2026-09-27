@@ -15,6 +15,38 @@ const STRATEGY_LIST = [
 
 const MIN_SCORE = 60;
 
+const ADX_TRENDING = 22;
+const ADX_LATERAL = 18;
+
+const CONTEXT_BONUS_PRIMARY = 5;
+const CONTEXT_BONUS_UNIVERSAL = 2;
+
+const PRIMARY_BY_STATE = {
+  trending: ["Trend_Pullback", "Breakout"],
+  lateral: ["VP_Mean_Revert", "SMC_Reversal"],
+  transitional: [],
+  unknown: []
+};
+
+export function classifyMarketState(pool) {
+  const p1h = pool?.p1h;
+  if (!p1h) return { state: "unknown", adx: null, direction: "neutral" };
+  const adx = p1h.adx?.adx;
+  if (adx == null || isNaN(adx)) {
+    return { state: "unknown", adx: null, direction: "neutral" };
+  }
+
+  const state = adx > ADX_TRENDING ? "trending" : adx < ADX_LATERAL ? "lateral" : "transitional";
+
+  let direction = "neutral";
+  if (state === "trending" && p1h.ema20 != null && p1h.ema50 != null && p1h.ema200 != null) {
+    if (p1h.ema20 > p1h.ema50 && p1h.ema50 > p1h.ema200) direction = "bullish";
+    else if (p1h.ema20 < p1h.ema50 && p1h.ema50 < p1h.ema200) direction = "bearish";
+  }
+
+  return { state, adx, direction };
+}
+
 export function buildIndicatorPool(ohlcv1h, ohlcv15m) {
   const extract = (data, idx) => data.map((d) => d[idx]);
   const result = {};
@@ -112,7 +144,7 @@ function trendPullback(pool) {
   let signal = "NEUTRAL", score = 0, prob = 0, reasons = [];
 
   const emaOrdered = p1h.ema20 && p1h.ema50 && p1h.ema200;
-  const trending = adx30 > 25;
+  const trending = adx30 > ADX_TRENDING;
 
   if (trending && emaOrdered) {
     const bullishOrder = p1h.ema20 > p1h.ema50 && p1h.ema50 > p1h.ema200;
@@ -373,11 +405,30 @@ export function evaluateStrategies(ohlcv1h, ohlcv15m, pool = null) {
   return results;
 }
 
-export function rankCandidates(results) {
+function applyContextBonus(results, marketState) {
+  if (!results.length) return results;
+  if (!marketState || !marketState.state || marketState.state === "unknown") return results;
+
+  const primary = PRIMARY_BY_STATE[marketState.state] || [];
+  if (!primary.length) return results;
+
+  return results.map((r) => {
+    const bonus = primary.includes(r.strategy) ? CONTEXT_BONUS_PRIMARY : CONTEXT_BONUS_UNIVERSAL;
+    return {
+      ...r,
+      score: Math.min(r.score + bonus, 100),
+      prob: Math.min(r.prob + bonus, 100)
+    };
+  });
+}
+
+export function rankCandidates(results, marketState = null) {
   if (!results.length) return [];
 
-  const longs = results.filter((r) => r.signal === "LONG");
-  const shorts = results.filter((r) => r.signal === "SHORT");
+  const scored = applyContextBonus(results, marketState);
+
+  const longs = scored.filter((r) => r.signal === "LONG");
+  const shorts = scored.filter((r) => r.signal === "SHORT");
 
   const candidates = [];
 
