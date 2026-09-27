@@ -254,7 +254,7 @@ export async function runInternalMultiStrategy(force = false) {
     return;
   }
 
-  console.log("🔄 Iniciando análisis multi-estrategia INTERNO (11 pares, 1H contexto / 15M gatillo)...");
+  console.log(`🔄 Iniciando análisis multi-estrategia INTERNO (${INTERNAL_MULTI_STRATEGY_LIST.length} pares, 1H contexto / 15M gatillo)...`);
   const winners = [];
   const skipped = [];
   const errors = [];

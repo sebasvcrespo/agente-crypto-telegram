@@ -1713,7 +1713,7 @@ bot.command("start", async (ctx) => {
       "• `Abierto` — Activa la alerta automática multi-estrategia interna\n" +
       "• `Cerrado` — Pausa la alerta automática\n" +
       "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
-      "• `Estrategia` — Multi-estrategia interna manual inmediata (11 pares, 1H/15M)\n" +
+      "• `Multi` — Motor multi-estrategia interno manual inmediato (12 pares, 1H/15M)\n" +
       "• `/aumentocapital` — Actualiza el capital BTC disponible (riesgo = 10% del capital)\n\n" +
       "*Comandos avanzados:*\n" +
       "• `/PAR INDICADOR [TF]` — Indicador específico (ej: `/ETH ADX 1h`)\n" +
@@ -1763,7 +1763,7 @@ bot.command("help", async (ctx) => {
     "*Alertas automáticas:*\n" +
     "• `Abierto` — Activa la alerta multi-estrategia interna (cada hora, 20s después del cierre de la vela 1H)\n" +
     "• `Cerrado` — Pausa\n" +
-    "• `Estrategia` — Multi-estrategia interna manual inmediata (11 pares, 1H/15M)\n" +
+    "• `Multi` — Motor multi-estrategia interno manual inmediato (12 pares, 1H/15M)\n" +
     "• `Escaneo` — Escaneo multi-par manual inmediato\n" +
     "• `/aumentocapital 0.00020` — Actualiza el capital BTC disponible (riesgo = 10% del capital)\n\n" +
     "*Fuentes:* `Bitget`, `Pionex`\n" +
@@ -1866,7 +1866,7 @@ bot.on("message:text", async (ctx) => {
 
     if (text === "abierto") {
       setBotStatus("Abierto");
-      await ctx.reply("🔓 *Modo Abierto* — Alertas activadas.\n\nSolo recibe el análisis automático de multi-estrategia interna (11 pares, 1H/15M, a los :00 +20s). Escribe *Cerrado* para pausarlas.", { parse_mode: "Markdown" });
+      await ctx.reply("🔓 *Modo Abierto* — Alertas activadas.\n\nSolo recibe el análisis automático del motor multi-estrategia interno (12 pares, 1H/15M, a los :00 +20s). Escribe *Cerrado* para pausarlas.", { parse_mode: "Markdown" });
       console.log("🔓 Bot status cambiado a: Abierto");
       return;
     }
@@ -1905,12 +1905,12 @@ bot.on("message:text", async (ctx) => {
       return;
     }
 
-    if (text === "estrategia" || text === "multiestrategia") {
+    if (text === "multi" || text === "multiestrategia" || text === "estrategia") {
       if (!chatId) {
         await ctx.reply("⚠️ Aún no tengo registrado tu chat. Escribí *Abierto* primero.", { parse_mode: "Markdown" });
         return;
       }
-      await ctx.reply("🧠 Ejecutando análisis multi-estrategia interno (11 pares, 1H/15M)...\n\nToma ~25 segundos.");
+      await ctx.reply("🧠 Ejecutando motor multi-estrategia interno (12 pares, 1H/15M)...\n\nToma ~25 segundos.");
       runInternalMultiStrategy(true).catch(async (err) => {
         console.error("❌ Error en multi-estrategia manual:", err.message);
         await ctx.reply(`⚠️ Error en multi-estrategia manual: ${err.message}`);
