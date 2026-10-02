@@ -1,0 +1,82 @@
+ESPECIFICACIONES TÉCNICAS: MOTOR DE ESTRATEGIAS (REPLICACIÓN)
+Fecha: 2026-10-02
+
+Este documento detalla la lógica interna de las 6 estrategias activas y el motor de Scoring/Ensemble para su replicación.
+
+================================================================================
+1. ESTRATEGIAS (Detector Lógica)
+================================================================================
+
+1.1. SMC_Reversal
+- Parámetros: SWEEP_LOOKBACK=20, CHOCH_WINDOW=5, OB_FVG_MIN_ATR=0.2.
+- Lógica: 
+  - Busca Sweeps de mínimos (LONG) / máximos (SHORT) en 20 velas.
+  - Verifica CHoCH (cambio de carácter) dentro de 5 velas tras el sweep. 
+  - Condición de invalidación: precio rompe el extremo del sweep antes del CHoCH.
+  - Busca OB (Order Block) o FVG (Fair Value Gap) no mitigados.
+- SL: Extremo del sweep +/- 0.25 * ATR.
+
+1.2. Trend_Pullback
+- Parámetros: FIB_LOW=0.618, FIB_HIGH=0.786, EMA_TOUCH_TOLERANCE=0.001.
+- Lógica:
+  - Tendencia: EMA20 > EMA50 > EMA200 (Long) / al revés (Short).
+  - Zona: Precio en retroceso Fib 0.618-0.786 o tocando zona de EMAs.
+  - Rechazo: Vela con mecha relevante >= 50% rango total + cierre a favor de tendencia.
+- SL: Swing bajo/alto (8 velas) +/- 1.0 * ATR.
+
+1.3. VP_Mean_Revert
+- Parámetros: VP_BINS=24, LVN_THRESHOLD=0.30.
+- Lógica:
+  - Volumen Profile de 120 velas (24 bins).
+  - Condición: Precio fuera del Value Area (VAH/VAL) + Precio en nodo de bajo volumen (LVN).
+  - Objetivo: Reversión al POC (Point of Control).
+- SL: VAH/VAL +/- 1.0 * ATR.
+
+1.4. Breakout
+- Parámetros: CONSOLIDATION_MIN=20, VOLUME_MULTIPLIER=1.8.
+- Lógica:
+  - Rango: High/Low consolidado en últimas 20 velas.
+  - Ruptura: Cierre vela trigger > High (Long) / < Low (Short).
+  - Confirmación: Volumen actual >= 1.8x promedio últimas 20 velas.
+- SL: Nivel roto +/- 0.25 * ATR (si distancia >= 1 ATR), sino punto medio del rango +/- 0.25 * ATR.
+
+1.5. Liquidity_Grab
+- Parámetros: EQH_LOOKBACK=120, EQH_RECENCY=40, WICK_MIN_RATIO=0.50.
+- Lógica:
+  - Busca EQH/EQL (tolerancia 0.1%) en 120 velas.
+  - Sweep: Precio penetra EQL/EQH y cierra por dentro.
+  - Rechazo: Mecha de barrido >= 50% rango total.
+- SL: Mínimo/Máximo de la mecha de barrido o últimas 3 velas +/- 0.25 * ATR.
+
+1.6. RSIDivergence
+- Parámetros: RSI_WINDOW=14, PIVOT_LEFT=2, PIVOT_RIGHT=2, CONFIRM_CANDLES=2.
+- Lógica:
+  - Detecta pivotes (precio y RSI) con ventana 2x2.
+  - Condición: Divergencia Regular (Precio LL + RSI HL / Precio HH + RSI LH).
+  - Alineación de pivotes: índice RSI <= 3 velas de índice Precio.
+- SL: Swing bajo/alto (8 velas) +/- 1.0 * ATR.
+
+================================================================================
+2. MOTOR DE ENSEMBLE (Scoring Engine)
+================================================================================
+
+2.1. Agregación
+- Las señales se agrupan por (símbolo, lado).
+- EnsembleCandidate:
+  - Score: Suma de scores de señales + Bonus (5 * (N_estrategias - 1)).
+  - Entry Price: Promedio ponderado de señales coincidentes.
+  - SL: El más defensivo (min para LONG, max para SHORT).
+
+2.2. Probabilidad Determinista
+- Base: Score Final / 100.
+- Factores (suma 0.05 por factor si cumple):
+  - Estructura: En zona clave (VP/Swing/OB_FVG).
+  - Volumen: RVOL > 1.5.
+  - Distancia SL: >= 1.0 * ATR.
+  - Confluencia: >= 3 estrategias activas.
+- Probabilidad Final: min(0.95, base + factores).
+
+2.3. Selección de Candidato Ganador
+- Filtros obligatorios: Score >= MIN_SCORE, Prob >= MIN_PROB.
+- Banda SL: 1.0% <= SL distance <= 4.0% (si fuera de banda, se invalida).
+- Ordenamiento: Score desc -> Prob desc -> Distancia SL desc.

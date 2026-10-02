@@ -38,6 +38,32 @@ export function calculateRSI(close, period = 14) {
   return 100 - (100 / (1 + avgGain / avgLoss));
 }
 
+export function calculateRSIArray(close, period = 14) {
+  const len = close.length;
+  const out = new Array(len).fill(null);
+  if (len < period + 1) return out;
+
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = close[i] - close[i - 1];
+    gains += Math.max(diff, 0);
+    losses += Math.max(-diff, 0);
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  out[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+
+  for (let i = period + 1; i < len; i++) {
+    const diff = close[i] - close[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  }
+
+  return out;
+}
+
 export function calculateATR(high, low, close, period = 14) {
   const len = Math.min(high.length, low.length, close.length);
   if (len < period + 1) return null;
@@ -322,7 +348,7 @@ export function calculateVolumeProfile(ohlcv, numBuckets = 15) {
   const vaPrices = vaBuckets.map((i) => minPrice + (i + 0.5) * bucketSize);
   const vah = Math.max(...vaPrices);
   const val = Math.min(...vaPrices);
-  return { poc, vah, val };
+  return { poc, vah, val, minPrice, maxPrice, bucketSize, buckets, maxBucketVol: maxVol, totalVol };
 }
 
 export function getIndicatorsForTimeframe(ohlcv, timeframe = "1h") {

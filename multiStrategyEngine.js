@@ -36,7 +36,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function symbolToPionex(symbol) {
+export function symbolToPionex(symbol) {
   return symbol.replace("/", "_").replace(/:(USDT|BTC)$/, "_PERP");
 }
 
@@ -202,7 +202,7 @@ async function analyzePair(base, btcUsd) {
 
   const best = candidates[0];
   const atr15 = pool.p15.atr;
-  const entry = pool.p15.precio;
+  const entry = best.entry ?? pool.p15.precio;
   const levels = calculateLevels(entry, atr15, best.direction, symbol, best.bestSlPrice);
 
   if (!levels) {
@@ -297,7 +297,13 @@ export async function runInternalMultiStrategy(force = false) {
         for (const e of errors) msg += `\n• ${e}`;
       }
     } else {
-      winners.sort((a, b) => b.score - a.score);
+      winners.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.probability !== a.probability) return b.probability - a.probability;
+        const da = Math.abs((a.levels?.entry ?? 0) - (a.levels?.sl ?? 0));
+        const db = Math.abs((b.levels?.entry ?? 0) - (b.levels?.sl ?? 0));
+        return db - da;
+      });
       const best = winners[0];
       msg = formatWinnerMessage(best);
       if (skipped.length) {
