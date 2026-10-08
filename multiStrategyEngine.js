@@ -1,6 +1,6 @@
 import axios from "axios";
 import { buildIndicatorPool, classifyMarketState, evaluateStrategies, rankCandidates } from "./strategies.js";
-import { calculateLevels, RISK_PERCENT, FEE_TOTAL } from "./riskManager.js";
+import { calculateLevels, applyLeverageCap, RISK_PERCENT, FEE_TOTAL } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
   "BTC/USDT",
@@ -129,10 +129,10 @@ function formatWinnerMessage(w) {
   msg += `🎲 Probabilidad: ${w.probability}%\n\n`;
   msg += `💰 Entrada: ${fmtBtc(w.levels.entry)} BTC\n`;
   msg += `🛑 SL: ${fmtBtc(w.levels.sl)} BTC (${pct(w.levels.entry, w.levels.sl, w.direction)}) — ${w.levels.slAtrMult}×ATR(15m)\n`;
-  msg += `🎯 TP1 (33%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
-  msg += `🎯 TP2 (33%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
-  msg += `🎯 TP3 (34%): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3, w.direction)})\n\n`;
-  msg += `💸 Comisiones Pionex 1% (0.5% apertura + 0.5% cierre) contempladas: TP1 neto ≥ 0% y riesgo SL real dentro del 10%\n`;
+  msg += `🎯 TP1 (60%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
+  msg += `🎯 TP2 (40%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
+  msg += `🔁 Tras TP1: cerrar 60% y mover el SL del 40% restante a BE neto (${w.direction === "LONG" ? "+0,50%" : "-0,50%"})\n\n`;
+  msg += `💸 Fee total estimado: 0,50% (incluido en el cálculo de niveles y riesgo)\n`;
   msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx 10x)${w.levels.exchangeMax ? ` — exchange ${w.levels.exchangeMax}x` : ""}\n`;
   msg += `📊 Riesgo (${(RISK_PERCENT * 100).toFixed(1)}% de capital): ${w.levels.riskBtc.toFixed(8)} BTC — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n`;
   if (w.levels.riskCapped) msg += `⚠️ Riesgo reducido por tope de 10x y capital disponible\n\n`;
@@ -203,7 +203,7 @@ async function analyzePair(base, btcUsd) {
   const best = candidates[0];
   const atr15 = pool.p15.atr;
   const entry = best.entry ?? pool.p15.precio;
-  const levels = calculateLevels(entry, atr15, best.direction, symbol, best.bestSlPrice);
+  const levels = calculateLevels(entry, atr15, best.direction, symbol, best.bestSlPrice, best.targetPrice);
 
   if (!levels) {
     const sl = best.bestSlPrice;
@@ -230,8 +230,7 @@ async function analyzePair(base, btcUsd) {
   }
 
   if (exchangeMax && exchangeMax >= 1) {
-    if (exchangeMax < levels.leverage) levels.leverage = exchangeMax;
-    levels.exchangeMax = exchangeMax;
+    Object.assign(levels, applyLeverageCap(levels, exchangeMax));
   }
 
   return {

@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildIndicatorPool, evaluateStrategies, rankCandidates, classifyMarketState,
+  buildIndicatorPool, evaluateStrategies, rankCandidates, classifyMarketState, filterByMarketRegime,
   smcReversal, trendPullback, vpMeanRevert, breakout, liquidityGrab, rsiDivergence,
   STRATEGY_LIST, MIN_SCORE, MIN_PROB
 } from "../strategies.js";
 import { INTERNAL_MULTI_STRATEGY_LIST, symbolToPionex } from "../multiStrategyEngine.js";
-import { calculateLevels } from "../riskManager.js";
+import { calculateLevels, applyLeverageCap } from "../riskManager.js";
 
 const TF = 3600000;
 const MIN15 = 900000;
@@ -185,11 +185,15 @@ test("Trend_Pullback detecta tendencia + pullback + rechazo", () => {
 });
 
 test("VP_Mean_Revert detecta precio fuera de VA en LVN", () => {
-  const pool = buildIndicatorPool(vpSeries(), flat15(120, 90.5));
+  const candles = flat15(120, 90.5);
+  candles[candles.length - 2][4] = 90;
+  candles[candles.length - 1][4] = 90.5;
+  const pool = buildIndicatorPool(vpSeries(), candles);
   const r = vpMeanRevert(pool);
   assert.ok(r, "debe generar señal");
   assert.equal(r.signal, "LONG");
   assert.ok(r.suggestedSlPrice < r.entry);
+  assert.ok(r.targetPrice > r.entry, "POC debe quedar como objetivo favorable");
 });
 
 test("Breakout exige cierre fuera del rango y volumen >= 1.8x", () => {
@@ -240,6 +244,28 @@ test("rankCandidates descarta candidatos bajo MIN_PROB", () => {
   assert.equal(cands.length, 0);
 });
 
+test("filterByMarketRegime alinea tendencia y bloquea transicion", () => {
+  const signals = [
+    { strategy: "Trend_Pullback", signal: "LONG" },
+    { strategy: "Breakout", signal: "SHORT" },
+    { strategy: "VP_Mean_Revert", signal: "SHORT" },
+    { strategy: "RSI_Divergence", signal: "LONG" }
+  ];
+
+  assert.deepEqual(
+    filterByMarketRegime(signals, { state: "trending", direction: "bullish" }),
+    [signals[0]]
+  );
+  assert.deepEqual(
+    filterByMarketRegime(signals, { state: "lateral", direction: "neutral" }),
+    [signals[2], signals[3]]
+  );
+  assert.deepEqual(
+    filterByMarketRegime(signals, { state: "transitional", direction: "neutral" }),
+    []
+  );
+});
+
 test("pipeline completo corre en todos los pares base BTC del proyecto", () => {
   for (const base of INTERNAL_MULTI_STRATEGY_LIST) {
     const price = base.endsWith("/BTC") ? 0.00002 : 60000;
@@ -273,4 +299,14 @@ test("calculateLevels mantiene la banda de SL 1%-3% con guarda de lado", () => {
   assert.equal(calculateLevels(100, 0.5, "LONG", symBtc, 99.5), null, "<1% inválido");
   assert.equal(calculateLevels(100, 3, "LONG", symBtc, 96), null, ">3% inválido");
   assert.equal(calculateLevels(100, 2, "LONG", symBtc, 102), null, "SL lado incorrecto");
+});
+
+test("applyLeverageCap recalcula nocional y riesgo real", () => {
+  const levels = calculateLevels(100, 2, "LONG", "XRP/BTC:BTC", 98);
+  const capped = applyLeverageCap(levels, 2);
+  assert.equal(capped.leverage, 2);
+  assert.equal(capped.notionalBtc, 0.0002);
+  assert.ok(capped.riskCapped);
+  assert.ok(capped.riskBtc < levels.riskBtc);
+  assert.equal(capped.exchangeMax, 2);
 });

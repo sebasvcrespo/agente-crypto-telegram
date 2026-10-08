@@ -61,6 +61,28 @@ const PRIMARY_BY_STATE = {
   unknown: []
 };
 
+const LATERAL_STRATEGIES = ["VP_Mean_Revert", "SMC_Reversal", "Liquidity_Grab", "RSI_Divergence"];
+
+export function filterByMarketRegime(results, marketState) {
+  if (!marketState || !marketState.state || marketState.state === "unknown") return results;
+
+  if (marketState.state === "transitional") return [];
+
+  if (marketState.state === "trending") {
+    if (marketState.direction !== "bullish" && marketState.direction !== "bearish") return [];
+    const direction = marketState.direction === "bullish" ? "LONG" : "SHORT";
+    return results.filter((r) =>
+      PRIMARY_BY_STATE.trending.includes(r.strategy) && r.signal === direction
+    );
+  }
+
+  if (marketState.state === "lateral") {
+    return results.filter((r) => LATERAL_STRATEGIES.includes(r.strategy));
+  }
+
+  return results;
+}
+
 export function classifyMarketState(pool) {
   const p1h = pool?.p1h;
   if (!p1h) return { state: "unknown", adx: null, direction: "neutral" };
@@ -349,11 +371,14 @@ function vpMeanRevert(pool) {
 
   const { poc, vah, val } = p1h.vp;
   const price = p1h.precio;
+  const triggerPrice = p15.precio;
   const atr = p1h.atr || price * 0.005;
 
+  if (!p15.close || p15.close.length < 2) return null;
+
   let dir = null;
-  if (price < val && isLvn(price, p1h.vp)) dir = "LONG";
-  else if (price > vah && isLvn(price, p1h.vp)) dir = "SHORT";
+  if (price < val && isLvn(price, p1h.vp) && triggerPrice > p15.close[p15.close.length - 2] && poc > triggerPrice) dir = "LONG";
+  else if (price > vah && isLvn(price, p1h.vp) && triggerPrice < p15.close[p15.close.length - 2] && poc < triggerPrice) dir = "SHORT";
   if (!dir) return null;
 
   let suggestedSlPrice;
@@ -371,6 +396,7 @@ function vpMeanRevert(pool) {
 
   let score = 60;
   const reasons = [`Precio fuera del Value Area ${dir === "LONG" ? `bajo VAL (${val.toFixed(8)})` : `sobre VAH (${vah.toFixed(8)})`} + LVN`];
+  reasons.push(`Rechazo 15m hacia POC (${poc.toFixed(8)})`);
   const adx1h = p1h.adx?.adx;
   if (adx1h != null && adx1h < ADX_LATERAL) { score += 10; reasons.push("ADX 1H lateral"); }
   if (dir === "LONG" && p15.rsi != null && p15.rsi < 40) { score += 10; reasons.push("RSI 15m sobrevendido"); }
@@ -387,6 +413,7 @@ function vpMeanRevert(pool) {
     prob: Math.min(score, 100),
     reasons,
     suggestedSlPrice,
+    targetPrice: poc,
     entry: p15.precio,
     atr: p15.atr || p15.precio * 0.005,
     structure: true,
@@ -662,7 +689,9 @@ function applyContextBonus(results, marketState) {
 export function rankCandidates(results, marketState = null) {
   if (!results.length) return [];
 
-  const scored = applyContextBonus(results, marketState);
+  const regimeResults = filterByMarketRegime(results, marketState);
+  if (!regimeResults.length) return [];
+  const scored = applyContextBonus(regimeResults, marketState);
   const candidates = [];
 
   const buildCandidate = (side) => {
@@ -698,6 +727,7 @@ export function rankCandidates(results, marketState = null) {
       bestStrategy: best.strategy,
       bestSlPrice: sl,
       entry,
+      targetPrice: best.targetPrice,
       score: Math.round(finalScore),
       probability: Math.round(probability),
       allStrategies: signals.map((r) => ({

@@ -1,7 +1,7 @@
 let CAPITAL_BTC = 0.00010;
 const RISK_PERCENT = 0.10;
 const MAX_LEVERAGE = 10;
-const FEE_TOTAL = 0.01;
+const FEE_TOTAL = 0.005;
 
 function calcRiskBtc() {
   return CAPITAL_BTC * RISK_PERCENT;
@@ -28,7 +28,7 @@ function volatilityCategory(symbol) {
   return "MED";
 }
 
-export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlPrice) {
+export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlPrice, targetPrice = null) {
   if (!entryPrice || !suggestedSlPrice) return null;
 
   const isLong = direction === "LONG";
@@ -39,7 +39,9 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
   const tp3Mult = 2.5;
 
   const sl = suggestedSlPrice;
-  const tp1 = isLong ? entryPrice + tp1Mult * r : entryPrice - tp1Mult * r;
+  const structuralTp1 = isLong ? entryPrice + tp1Mult * r : entryPrice - tp1Mult * r;
+  const targetIsValid = targetPrice != null && (isLong ? targetPrice > entryPrice : targetPrice < entryPrice);
+  const tp1 = targetIsValid ? targetPrice : structuralTp1;
   const tp2 = isLong ? entryPrice + tp2Mult * r : entryPrice - tp2Mult * r;
   const tp3 = isLong ? entryPrice + tp3Mult * r : entryPrice - tp3Mult * r;
 
@@ -76,6 +78,28 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
     slDistancePct: (slDistancePct * 100).toFixed(2),
     volatility: volatilityCategory(symbol),
     slAtrMult: (slDistance / (atr || 1)).toFixed(2)
+  };
+}
+
+export function applyLeverageCap(levels, maxLeverage) {
+  if (!levels || !Number.isFinite(maxLeverage) || maxLeverage <= 0) return levels;
+
+  const cappedLeverage = Math.max(1, maxLeverage);
+  const maxNotional = cappedLeverage * CAPITAL_BTC;
+  if (levels.notionalBtc <= maxNotional && levels.leverage <= cappedLeverage) {
+    return { ...levels, exchangeMax: cappedLeverage };
+  }
+
+  const notionalBtc = Math.min(levels.notionalBtc, maxNotional);
+  const slDistancePct = Number(levels.slDistancePct) / 100;
+  const actualRisk = notionalBtc * (slDistancePct + FEE_TOTAL);
+  return {
+    ...levels,
+    notionalBtc,
+    leverage: cappedLeverage,
+    riskBtc: actualRisk,
+    riskCapped: true,
+    exchangeMax: cappedLeverage
   };
 }
 
