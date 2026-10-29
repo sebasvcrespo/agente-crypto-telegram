@@ -1,8 +1,4 @@
-import {
-  calculateBB, calculateRSI, calculateRSIArray, calculateATR, calculateADX,
-  calculateEMA, calculateMACD, calculatePivotsArray,
-  calculateVolumeProfile
-} from "./indicators.js";
+import { calculateRSIArray, calculateEMA, calculateATRArray } from "./indicators.js";
 
 const STRATEGY_LIST = [
   "SMC_Reversal",
@@ -13,633 +9,827 @@ const STRATEGY_LIST = [
   "RSI_Divergence"
 ];
 
-const MIN_SCORE = 60;
-const MIN_PROB = 65;
+const CLOSED_COUNT = 200;
 
-// SMC_Reversal
-const SWEEP_LOOKBACK = 20;
-const CHOCH_WINDOW = 5;
+const MIN_SCORE = 35;
+const MIN_PROB = 0.45;
+const SESSION_STRICT_MIN_SCORE = 50;
+const SESSION_STRICT_MIN_PROB = 0.55;
+const ENSEMBLE_BONUS = 15;
+const PROB_BASE = 0.40;
+const FACTOR_STRUCTURE = 0.05;
+const FACTOR_VOLUME = 0.05;
+const FACTOR_SL_DISTANCE = 0.05;
+const FACTOR_CONFLUENCE = 0.05;
+const FACTOR_QUALITY = 0.05;
+const RVOL_HIGH_THRESHOLD = 1.5;
+
+const STRATEGY_WEIGHTS = {
+  Breakout: 1.2,
+  RSI_Divergence: 1.1,
+  VP_Mean_Revert: 1.0,
+  Trend_Pullback: 0.8,
+  SMC_Reversal: 0.6,
+  Liquidity_Grab: 0.7
+};
+
+const QUALITY_STRATEGIES = ["Breakout", "RSI_Divergence"];
+
+const SWEEP_PRIOR_WINDOW = 20;
+const SWEEP_LOOKBACK = 30;
+const CHOCH_WINDOW = 10;
+const SWEEP_EQUAL_TOLERANCE = 0.0;
 const OB_FVG_MIN_ATR = 0.2;
 
-// Trend_Pullback
+const TREND_PIVOT_WINDOW = 3;
 const FIB_LOW = 0.618;
 const FIB_HIGH = 0.786;
-const EMA_TOUCH_TOLERANCE = 0.001;
 
-// VP_Mean_Revert
 const VP_BINS = 24;
 const VP_LOOKBACK = 120;
-const LVN_THRESHOLD = 0.30;
+const LVN_THRESHOLD = 0.45;
+const VP_VALUE_AREA = 0.68;
 
-// Breakout
 const CONSOLIDATION_MIN = 20;
 const VOLUME_MULTIPLIER = 1.8;
+const VOLUME_AVG_WINDOW = 20;
+const ATR_SL_THRESHOLD = 1.0;
 
-// Liquidity_Grab
 const EQH_LOOKBACK = 120;
 const EQH_RECENCY = 40;
 const WICK_MIN_RATIO = 0.50;
 const EQH_TOLERANCE = 0.001;
 
-// RSI_Divergence
 const RSI_WINDOW = 14;
 const PIVOT_LEFT = 2;
 const PIVOT_RIGHT = 2;
 const CONFIRM_CANDLES = 2;
-const PIVOT_ALIGNMENT = 3;
+const PIVOT_INDEX_TOLERANCE = 3;
 
-const ADX_TRENDING = 22;
-const ADX_LATERAL = 18;
+const MIN_SL_DISTANCE_PCT = 1.0;
+const MAX_SL_DISTANCE_PCT = 4.0;
+const SL_MIN_BUFFER_PCT = 1.1;
+const SESSION_BLOCK_HOURS_UTC = [[0, 12]];
+const SESSION_STRICT_HOURS_UTC = [[0, 12]];
+const MOMENTUM_LOOKBACK_CANDLES = 4;
+const MOMENTUM_MAX_ADVERSE_PCT = 0.3;
+const MOMENTUM_MAX_ADVERSE_ATR = 0.5;
+const VOLATILITY_MAX_ATR_PCT = 0.6;
+const RELATIVE_STRENGTH_LOOKBACK_CANDLES = 16;
 
-const CONTEXT_BONUS_PRIMARY = 5;
-const CONTEXT_BONUS_UNIVERSAL = 2;
-
-const PRIMARY_BY_STATE = {
-  trending: ["Trend_Pullback", "Breakout"],
-  lateral: ["VP_Mean_Revert", "SMC_Reversal"],
-  transitional: [],
-  unknown: []
-};
-
-const LATERAL_STRATEGIES = ["VP_Mean_Revert", "SMC_Reversal", "Liquidity_Grab", "RSI_Divergence"];
-
-export function filterByMarketRegime(results, marketState) {
-  if (!marketState || !marketState.state || marketState.state === "unknown") return results;
-
-  if (marketState.state === "transitional") return [];
-
-  if (marketState.state === "trending") {
-    if (marketState.direction !== "bullish" && marketState.direction !== "bearish") return [];
-    const direction = marketState.direction === "bullish" ? "LONG" : "SHORT";
-    return results.filter((r) =>
-      PRIMARY_BY_STATE.trending.includes(r.strategy) && r.signal === direction
-    );
+function lastNonNull(arr) {
+  if (!arr) return null;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const v = arr[i];
+    if (v != null && !isNaN(v)) return v;
   }
-
-  if (marketState.state === "lateral") {
-    return results.filter((r) => LATERAL_STRATEGIES.includes(r.strategy));
-  }
-
-  return results;
-}
-
-export function classifyMarketState(pool) {
-  const p1h = pool?.p1h;
-  if (!p1h) return { state: "unknown", adx: null, direction: "neutral" };
-  const adx = p1h.adx?.adx;
-  if (adx == null || isNaN(adx)) {
-    return { state: "unknown", adx: null, direction: "neutral" };
-  }
-
-  const state = adx > ADX_TRENDING ? "trending" : adx < ADX_LATERAL ? "lateral" : "transitional";
-
-  let direction = "neutral";
-  if (state === "trending" && p1h.ema20 != null && p1h.ema50 != null && p1h.ema200 != null) {
-    if (p1h.ema20 > p1h.ema50 && p1h.ema50 > p1h.ema200) direction = "bullish";
-    else if (p1h.ema20 < p1h.ema50 && p1h.ema50 < p1h.ema200) direction = "bearish";
-  }
-
-  return { state, adx, direction };
-}
-
-export function buildIndicatorPool(ohlcv1h, ohlcv15m) {
-  const extract = (data, idx) => data.map((d) => d[idx]);
-  const result = {};
-
-  if (ohlcv1h && ohlcv1h.length >= 20) {
-    const o = extract(ohlcv1h, 1), h = extract(ohlcv1h, 2),
-          l = extract(ohlcv1h, 3), c = extract(ohlcv1h, 4), v = extract(ohlcv1h, 5);
-    const volSlice = v.slice(-CONSOLIDATION_MIN);
-    result.p1h = {
-      precio: c[c.length - 1],
-      close: c, high: h, low: l, open: o, volume: v,
-      bb: calculateBB(c, 20, 2),
-      rsi: calculateRSI(c, 14),
-      adx: calculateADX(h, l, c, 14),
-      atr: calculateATR(h, l, c, 14),
-      ema20: calculateEMA(c, 20),
-      ema50: calculateEMA(c, 50),
-      ema200: calculateEMA(c, 200),
-      macd: calculateMACD(c),
-      pivots: calculatePivotsArray(h, l, 3),
-      vp: calculateVolumeProfile(ohlcv1h.slice(-VP_LOOKBACK), VP_BINS),
-      volAvg: volSlice.reduce((a, b) => a + b, 0) / Math.min(CONSOLIDATION_MIN, volSlice.length),
-      lastVol: v[v.length - 1]
-    };
-  }
-
-  if (ohlcv15m && ohlcv15m.length >= 20) {
-    const o = extract(ohlcv15m, 1), h = extract(ohlcv15m, 2),
-          l = extract(ohlcv15m, 3), c = extract(ohlcv15m, 4), v = extract(ohlcv15m, 5);
-    const volSlice = v.slice(-CONSOLIDATION_MIN);
-    result.p15 = {
-      precio: c[c.length - 1],
-      close: c, high: h, low: l, open: o, volume: v,
-      bb: calculateBB(c, 20, 2),
-      rsi: calculateRSI(c, 14),
-      adx: calculateADX(h, l, c, 14),
-      atr: calculateATR(h, l, c, 14),
-      ema20: calculateEMA(c, 20),
-      ema50: calculateEMA(c, 50),
-      macd: calculateMACD(c),
-      pivots: calculatePivotsArray(h, l, 3),
-      volAvg: volSlice.reduce((a, b) => a + b, 0) / Math.min(CONSOLIDATION_MIN, volSlice.length),
-      lastVol: v[v.length - 1]
-    };
-  }
-
-  return result;
-}
-
-function rvolOf(p15) {
-  if (!p15 || !p15.volAvg) return null;
-  return p15.lastVol / p15.volAvg;
-}
-
-function lastCandleRejection(p15) {
-  const n = p15.close.length;
-  if (n < 1) return null;
-  const o = p15.open[n - 1], c = p15.close[n - 1], h = p15.high[n - 1], l = p15.low[n - 1];
-  const range = h - l;
-  if (range <= 0) return { lowerWickRatio: 0, upperWickRatio: 0, bullish: c >= o, bearish: c <= o };
-  return {
-    lowerWickRatio: (Math.min(o, c) - l) / range,
-    upperWickRatio: (h - Math.max(o, c)) / range,
-    bullish: c >= o,
-    bearish: c <= o
-  };
-}
-
-function findOBorFVG(open, high, low, close, atr, dir, minAtr) {
-  const n = close.length;
-  if (n < 4 || !atr) return null;
-  const minGap = minAtr * atr;
-
-  for (let i = n - 3; i >= 2; i--) {
-    const gapUp = low[i + 1] - high[i - 1];
-    const gapDown = low[i - 1] - high[i + 1];
-    if (dir === "LONG" && gapUp >= minGap) {
-      const since = Math.min(...low.slice(i + 2));
-      if (since >= high[i - 1]) return { type: "FVG", idx: i, size: gapUp };
-    }
-    if (dir === "SHORT" && gapDown >= minGap) {
-      const since = Math.max(...high.slice(i + 2));
-      if (since <= low[i - 1]) return { type: "FVG", idx: i, size: gapDown };
-    }
-  }
-
-  for (let i = n - 2; i >= 1; i--) {
-    const move = close[i + 1] - open[i + 1];
-    if (dir === "LONG" && close[i] < open[i] && move >= minGap) {
-      return { type: "OB", idx: i, size: move };
-    }
-    if (dir === "SHORT" && close[i] > open[i] && -move >= minGap) {
-      return { type: "OB", idx: i, size: move };
-    }
-  }
-
   return null;
 }
 
-function pivotIndices(arr, left, right, type, skipNull = false) {
-  const idxs = [];
-  for (let i = left; i < arr.length - right; i++) {
-    const v = arr[i];
-    if (skipNull && v == null) continue;
-    let ok = true;
-    for (let j = 1; j <= left && ok; j++) {
-      const pv = arr[i - j];
-      if (pv == null) { ok = false; break; }
-      if (type === "high" ? v <= pv : v >= pv) ok = false;
-    }
-    for (let j = 1; j <= right && ok; j++) {
-      const nv = arr[i + j];
-      if (nv == null) { ok = false; break; }
-      if (type === "high" ? v <= nv : v >= nv) ok = false;
-    }
-    if (ok) idxs.push(i);
-  }
-  return idxs;
+function mean(arr) {
+  if (!arr || !arr.length) return 0;
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
-function smcReversal(pool) {
-  const p15 = pool.p15;
-  const p1h = pool.p1h;
-  if (!p15 || !p15.close || p15.close.length < SWEEP_LOOKBACK + CHOCH_WINDOW + 2) return null;
+function sliceMin(arr, from, to) {
+  let m = Infinity;
+  for (let i = from; i < to; i++) if (arr[i] < m) m = arr[i];
+  return m;
+}
 
-  const { high, low, close, open } = p15;
-  const n = close.length;
-  const lastIdx = n - 1;
-  const atr = p15.atr || close[lastIdx] * 0.005;
+function sliceMax(arr, from, to) {
+  let m = -Infinity;
+  for (let i = from; i < to; i++) if (arr[i] > m) m = arr[i];
+  return m;
+}
 
-  let sweep = null;
-  for (let i = Math.max(SWEEP_LOOKBACK, lastIdx - CHOCH_WINDOW); i <= lastIdx; i++) {
-    const start = i - SWEEP_LOOKBACK;
-    const priorLow = Math.min(...low.slice(start, i));
-    const priorHigh = Math.max(...high.slice(start, i));
-    if (low[i] < priorLow && close[i] > priorLow) {
-      sweep = { dir: "LONG", extreme: low[i], idx: i };
-    }
-    if (high[i] > priorHigh && close[i] < priorHigh) {
-      sweep = { dir: "SHORT", extreme: high[i], idx: i };
-    }
-  }
-  if (!sweep) return null;
+export function dropFormingCandles(klines, intervalMs = 900000, nowMs = Date.now()) {
+  const closed = (klines || []).filter((k) => k[0] + intervalMs <= nowMs);
+  return closed.length ? closed : (klines || []);
+}
 
-  const refIdx = sweep.idx > 0 ? sweep.idx - 1 : sweep.idx;
-  const end = Math.min(lastIdx, sweep.idx + CHOCH_WINDOW);
-  let chochIdx = -1;
-  for (let i = sweep.idx + 1; i <= end; i++) {
-    if (sweep.dir === "LONG" && close[i] > high[refIdx]) { chochIdx = i; break; }
-    if (sweep.dir === "SHORT" && close[i] < low[refIdx]) { chochIdx = i; break; }
-  }
-  if (chochIdx < 0) return null;
-
-  for (let i = sweep.idx + 1; i <= chochIdx; i++) {
-    if (sweep.dir === "LONG" && low[i] < sweep.extreme) return null;
-    if (sweep.dir === "SHORT" && high[i] > sweep.extreme) return null;
-  }
-
-  const imbalance = findOBorFVG(open, high, low, close, atr, sweep.dir, OB_FVG_MIN_ATR);
-
-  let score = 60;
-  const reasons = [];
-  reasons.push(`Sweep ${sweep.dir === "LONG" ? "de mínimos" : "de máximos"} + CHoCH (${CHOCH_WINDOW} velas)`);
-  if (imbalance) {
-    score += 15;
-    reasons.push(`${imbalance.type} no mitigado (${imbalance.size.toFixed(8)})`);
-  }
-  const rsi15 = p15.rsi;
-  if (sweep.dir === "LONG" && rsi15 != null && rsi15 < 35) { score += 10; reasons.push("RSI 15m sobrevendido"); }
-  if (sweep.dir === "SHORT" && rsi15 != null && rsi15 > 65) { score += 10; reasons.push("RSI 15m sobrecomprado"); }
-  const adx1h = p1h?.adx?.adx;
-  if (adx1h != null && adx1h < ADX_LATERAL) { score += 5; reasons.push("Contexto 1H lateral"); }
-
-  const suggestedSlPrice = sweep.dir === "LONG" ? sweep.extreme - 0.25 * atr : sweep.extreme + 0.25 * atr;
-
+export function buildFrame15m(ohlcv15m) {
+  if (!ohlcv15m || ohlcv15m.length < 20) return null;
+  const timestamp = ohlcv15m.map((d) => d[0]);
+  const open = ohlcv15m.map((d) => d[1]);
+  const high = ohlcv15m.map((d) => d[2]);
+  const low = ohlcv15m.map((d) => d[3]);
+  const close = ohlcv15m.map((d) => d[4]);
+  const volume = ohlcv15m.map((d) => d[5]);
   return {
-    strategy: "SMC_Reversal",
-    signal: sweep.dir,
-    score: Math.min(score, 100),
-    prob: Math.min(score, 100),
-    reasons,
-    suggestedSlPrice,
-    entry: p15.precio,
-    atr,
-    structure: !!imbalance,
-    rvol: rvolOf(p15)
+    n: close.length,
+    timestamp, open, high, low, close, volume,
+    rsi: calculateRSIArray(close, RSI_WINDOW),
+    atr: calculateATRArray(high, low, close, 14),
+    ema20: calculateEMA(close, 20),
+    ema50: calculateEMA(close, 50),
+    ema200: calculateEMA(close, 200),
+    precio: close[close.length - 1]
   };
 }
 
-function trendPullback(pool) {
-  const p1h = pool.p1h, p15 = pool.p15;
-  if (!p1h || !p15) return null;
-  if (p1h.ema20 == null || p1h.ema50 == null || p1h.ema200 == null) return null;
-
-  const { close, high, low } = p1h;
-  const n = close.length;
-  const price = p1h.precio;
-  const { ema20, ema50, ema200 } = p1h;
-
-  const bullish = ema20 > ema50 && ema50 > ema200;
-  const bearish = ema20 < ema50 && ema50 < ema200;
-  if (!bullish && !bearish) return null;
-
-  const dir = bullish ? "LONG" : "SHORT";
-
-  const lookback = Math.min(50, n);
-  const windowHigh = Math.max(...high.slice(n - lookback));
-  const windowLow = Math.min(...low.slice(n - lookback));
-  const impulse = windowHigh - windowLow;
-
-  let inFib = false;
-  if (impulse > 0) {
-    const a = windowHigh - FIB_LOW * impulse;
-    const b = windowHigh - FIB_HIGH * impulse;
-    inFib = price >= Math.min(a, b) && price <= Math.max(a, b);
-  }
-
-  const nearEma20 = Math.abs(price - ema20) / price <= EMA_TOUCH_TOLERANCE
-    || Math.abs(price - ema50) / price <= EMA_TOUCH_TOLERANCE;
-  const inEmaZone = (price <= ema20 && price >= ema50) || (price >= ema20 && price <= ema50);
-  const inZone = inFib || nearEma20 || inEmaZone;
-  if (!inZone) return null;
-
-  const rejection = lastCandleRejection(p15);
-  if (!rejection) return null;
-  const rejectionOk = dir === "LONG" ? (rejection.lowerWickRatio >= 0.5 && rejection.bullish)
-                                     : (rejection.upperWickRatio >= 0.5 && rejection.bearish);
-  if (!rejectionOk) return null;
-
-  let score = 60;
-  const reasons = [`Tendencia ${bullish ? "alcista" : "bajista"} EMA20/50/200 + pullback a zona`];
-  if (inFib) { score += 10; reasons.push(`Retroceso Fib ${FIB_LOW}-${FIB_HIGH}`); }
-  const adx1h = p1h.adx?.adx;
-  if (adx1h != null && adx1h > 30) { score += 10; reasons.push(`ADX 1H fuerte (${adx1h})`); }
-  if (dir === "LONG" && p15.rsi != null && p15.rsi > 45 && p15.rsi < 60) { score += 5; reasons.push("RSI 15m neutral-alcista"); }
-  if (dir === "SHORT" && p15.rsi != null && p15.rsi > 40 && p15.rsi < 55) { score += 5; reasons.push("RSI 15m neutral-bajista"); }
-
-  const atr = p15.atr || price * 0.005;
-  const swingLow = Math.min(...p15.low.slice(-8));
-  const swingHigh = Math.max(...p15.high.slice(-8));
-  const suggestedSlPrice = dir === "LONG" ? swingLow - 1.0 * atr : swingHigh + 1.0 * atr;
-
-  return {
-    strategy: "Trend_Pullback",
-    signal: dir,
-    score: Math.min(score, 100),
-    prob: Math.min(score, 100),
-    reasons,
-    suggestedSlPrice,
-    entry: p15.precio,
-    atr,
-    structure: inFib || nearEma20,
-    rvol: rvolOf(p15)
-  };
-}
-
-function isLvn(price, vp) {
-  if (!vp || !vp.buckets || vp.buckets.length === 0 || !vp.bucketSize || vp.maxBucketVol <= 0) return false;
-  let idx = Math.floor((price - vp.minPrice) / vp.bucketSize);
-  idx = Math.max(0, Math.min(vp.buckets.length - 1, idx));
-  return vp.buckets[idx] <= LVN_THRESHOLD * vp.maxBucketVol;
-}
-
-function vpMeanRevert(pool) {
-  const p1h = pool.p1h, p15 = pool.p15;
-  if (!p1h || !p15 || !p1h.vp) return null;
-
-  const { poc, vah, val } = p1h.vp;
-  const price = p1h.precio;
-  const triggerPrice = p15.precio;
-  const atr = p1h.atr || price * 0.005;
-
-  if (!p15.close || p15.close.length < 2) return null;
-
-  let dir = null;
-  if (price < val && isLvn(price, p1h.vp) && triggerPrice > p15.close[p15.close.length - 2] && poc > triggerPrice) dir = "LONG";
-  else if (price > vah && isLvn(price, p1h.vp) && triggerPrice < p15.close[p15.close.length - 2] && poc < triggerPrice) dir = "SHORT";
-  if (!dir) return null;
-
-  let suggestedSlPrice;
-  if (dir === "LONG") {
-    suggestedSlPrice = val - 1.0 * atr;
-    if (!(suggestedSlPrice < price)) {
-      suggestedSlPrice = Math.min(poc, price) - 1.0 * atr;
+function detectPivots(values, left, right) {
+  const highs = [];
+  const lows = [];
+  const n = values.length;
+  for (let i = left; i < n - right; i++) {
+    const v = values[i];
+    if (v == null || isNaN(v)) continue;
+    let isHigh = true;
+    let isLow = true;
+    for (let k = 1; k <= left; k++) {
+      const pv = values[i - k];
+      if (pv == null || isNaN(pv)) { isHigh = false; isLow = false; break; }
+      if (!(v >= pv)) isHigh = false;
+      if (!(v <= pv)) isLow = false;
+      if (!isHigh && !isLow) break;
     }
-  } else {
-    suggestedSlPrice = vah + 1.0 * atr;
-    if (!(suggestedSlPrice > price)) {
-      suggestedSlPrice = Math.max(poc, price) + 1.0 * atr;
+    if (isHigh || isLow) {
+      for (let k = 1; k <= right; k++) {
+        const nv = values[i + k];
+        if (nv == null || isNaN(nv)) { isHigh = false; isLow = false; break; }
+        if (!(v >= nv)) isHigh = false;
+        if (!(v <= nv)) isLow = false;
+        if (!isHigh && !isLow) break;
+      }
+    }
+    if (isHigh) highs.push([i, v]);
+    if (isLow) lows.push([i, v]);
+  }
+  return { highs, lows };
+}
+
+function fibonacciZone(swingLow, swingHigh) {
+  const diff = swingHigh - swingLow;
+  const f618 = swingHigh - diff * FIB_LOW;
+  const f786 = swingHigh - diff * FIB_HIGH;
+  return [Math.min(f618, f786), Math.max(f618, f786)];
+}
+
+function percentile(arr, p) {
+  const sorted = [...arr].sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+function findSweeps(frame) {
+  const { high, low } = frame;
+  const n = frame.n;
+  const start = Math.max(SWEEP_PRIOR_WINDOW, n - SWEEP_LOOKBACK);
+  const longSweeps = [];
+  const shortSweeps = [];
+  for (let i = start; i < n; i++) {
+    const priorHigh = sliceMax(high, i - SWEEP_PRIOR_WINDOW, i);
+    const priorLow = sliceMin(low, i - SWEEP_PRIOR_WINDOW, i);
+    if (low[i] < priorLow * (1.0 - SWEEP_EQUAL_TOLERANCE)) {
+      longSweeps.push({ idx: i, price: low[i], priorHigh, priorLow });
+    }
+    if (high[i] > priorHigh * (1.0 + SWEEP_EQUAL_TOLERANCE)) {
+      shortSweeps.push({ idx: i, price: high[i], priorHigh, priorLow });
     }
   }
-
-  let score = 60;
-  const reasons = [`Precio fuera del Value Area ${dir === "LONG" ? `bajo VAL (${val.toFixed(8)})` : `sobre VAH (${vah.toFixed(8)})`} + LVN`];
-  reasons.push(`Rechazo 15m hacia POC (${poc.toFixed(8)})`);
-  const adx1h = p1h.adx?.adx;
-  if (adx1h != null && adx1h < ADX_LATERAL) { score += 10; reasons.push("ADX 1H lateral"); }
-  if (dir === "LONG" && p15.rsi != null && p15.rsi < 40) { score += 10; reasons.push("RSI 15m sobrevendido"); }
-  if (dir === "SHORT" && p15.rsi != null && p15.rsi > 60) { score += 10; reasons.push("RSI 15m sobrecomprado"); }
-  if (p15.bb) {
-    if (dir === "LONG" && p15.precio < p15.bb.lower) { score += 5; reasons.push("Bajo BB 15m"); }
-    if (dir === "SHORT" && p15.precio > p15.bb.upper) { score += 5; reasons.push("Sobre BB 15m"); }
-  }
-
-  return {
-    strategy: "VP_Mean_Revert",
-    signal: dir,
-    score: Math.min(score, 100),
-    prob: Math.min(score, 100),
-    reasons,
-    suggestedSlPrice,
-    targetPrice: poc,
-    entry: p15.precio,
-    atr: p15.atr || p15.precio * 0.005,
-    structure: true,
-    rvol: rvolOf(p15)
-  };
+  return { longSweeps, shortSweeps };
 }
 
-function breakout(pool) {
-  const p15 = pool.p15;
-  if (!p15 || !p15.close || p15.close.length < CONSOLIDATION_MIN + 1) return null;
-
-  const n = p15.close.length;
-  const { close, high, low, volume } = p15;
-
-  const rangeHigh = Math.max(...high.slice(n - 1 - CONSOLIDATION_MIN, n - 1));
-  const rangeLow = Math.min(...low.slice(n - 1 - CONSOLIDATION_MIN, n - 1));
-  const consoVol = volume.slice(n - 1 - CONSOLIDATION_MIN, n - 1);
-  const avgVol = consoVol.reduce((a, b) => a + b, 0) / consoVol.length;
-
-  const lastClose = close[n - 1];
-  const lastVol = volume[n - 1];
-  const rvol = avgVol > 0 ? lastVol / avgVol : 0;
-  if (rvol < VOLUME_MULTIPLIER) return null;
-
-  let dir = null;
-  if (lastClose > rangeHigh) dir = "LONG";
-  else if (lastClose < rangeLow) dir = "SHORT";
-  if (!dir) return null;
-
-  const atr = p15.atr || lastClose * 0.005;
-  const broken = dir === "LONG" ? rangeHigh : rangeLow;
-  const mid = (rangeHigh + rangeLow) / 2;
-  const dist = Math.abs(lastClose - broken);
-
-  let suggestedSlPrice;
-  if (dist >= atr) {
-    suggestedSlPrice = dir === "LONG" ? broken - 0.25 * atr : broken + 0.25 * atr;
-  } else {
-    suggestedSlPrice = dir === "LONG" ? mid - 0.25 * atr : mid + 0.25 * atr;
-  }
-  if (dir === "LONG" && !(suggestedSlPrice < lastClose)) suggestedSlPrice = mid - 0.25 * atr;
-  if (dir === "SHORT" && !(suggestedSlPrice > lastClose)) suggestedSlPrice = mid + 0.25 * atr;
-
-  let score = 60;
-  const reasons = [`Breakout ${dir === "LONG" ? "alcista" : "bajista"} cierre (${lastClose.toFixed(8)}) ${dir === "LONG" ? ">" : "<"} rango (${broken.toFixed(8)})`];
-  reasons.push(`Volumen ${rvol.toFixed(1)}x media (>= ${VOLUME_MULTIPLIER}x)`);
-  score += 15;
-  if (dir === "LONG" && p15.rsi != null && p15.rsi > 55) { score += 5; reasons.push("RSI 15m alcista"); }
-  if (dir === "SHORT" && p15.rsi != null && p15.rsi < 45) { score += 5; reasons.push("RSI 15m bajista"); }
-  const adx15 = p15.adx?.adx;
-  if (adx15 != null && adx15 > 20) { score += 5; reasons.push("ADX 15m confirmado"); }
-
-  return {
-    strategy: "Breakout",
-    signal: dir,
-    score: Math.min(score, 100),
-    prob: Math.min(score, 100),
-    reasons,
-    suggestedSlPrice,
-    entry: p15.precio,
-    atr,
-    structure: true,
-    rvol
-  };
-}
-
-function clusterEqualLevels(pivots, tolerance) {
-  const levels = [];
-  for (const p of pivots) {
-    const found = levels.find((l) => Math.abs(l.value - p.value) / p.value <= tolerance);
-    if (found) {
-      found.members.push(p);
-      found.value = found.members.reduce((a, m) => a + m.value, 0) / found.members.length;
-      found.lastIdx = Math.max(found.lastIdx, p.idx);
-      found.firstIdx = Math.min(found.firstIdx, p.idx);
+function detectChoch(frame, side, sweepIdx, sweepPrice) {
+  const n = frame.n;
+  if (n < 5) return false;
+  const { close, high, low } = frame;
+  const end = Math.min(sweepIdx + CHOCH_WINDOW + 1, n);
+  const ref = side === "LONG" ? high[sweepIdx] : low[sweepIdx];
+  for (let i = sweepIdx + 1; i < end; i++) {
+    if (side === "LONG") {
+      if (low[i] < sweepPrice) return false;
+      if (close[i] > ref) return true;
     } else {
-      levels.push({ value: p.value, members: [p], lastIdx: p.idx, firstIdx: p.idx });
+      if (high[i] > sweepPrice) return false;
+      if (close[i] < ref) return true;
     }
   }
-  return levels.filter((l) => l.members.length >= 2);
+  return false;
 }
 
-function liquidityGrab(pool) {
-  const p1h = pool.p1h, p15 = pool.p15;
-  if (!p1h || !p15) return null;
-  const n1 = p1h.close.length;
-  if (n1 < 30) return null;
+function findFvg(frame, side) {
+  const { close, high, low, atr } = frame;
+  const n = frame.n;
+  if (n < 3) return null;
+  const atrVal = lastNonNull(atr) ?? 0;
+  if (atrVal <= 0) return null;
+  const minSize = OB_FVG_MIN_ATR * atrVal;
+  const current = close[n - 1];
+  for (let i = n - 1; i > 1; i--) {
+    if (side === "LONG") {
+      const fvgLow = high[i - 2];
+      const fvgHigh = low[i];
+      if (fvgHigh > fvgLow && fvgHigh - fvgLow >= minSize && current >= fvgLow) {
+        return { low: fvgLow, high: fvgHigh, size: fvgHigh - fvgLow };
+      }
+    } else {
+      const fvgHigh = low[i - 2];
+      const fvgLow = high[i];
+      if (fvgLow < fvgHigh && fvgHigh - fvgLow >= minSize && current <= fvgHigh) {
+        return { low: fvgLow, high: fvgHigh, size: fvgHigh - fvgLow };
+      }
+    }
+  }
+  return null;
+}
 
-  const start = Math.max(0, n1 - EQH_LOOKBACK);
-  const hSlice = p1h.high.slice(start);
-  const lSlice = p1h.low.slice(start);
-  const highs = pivotIndices(hSlice, 2, 2, "high").map((i) => ({ idx: start + i, value: hSlice[i] }));
-  const lows = pivotIndices(lSlice, 2, 2, "low").map((i) => ({ idx: start + i, value: lSlice[i] }));
+function findOb(frame, side) {
+  const { close, open, high, low } = frame;
+  const n = frame.n;
+  if (n < 3) return null;
+  const current = close[n - 1];
+  for (let i = n - 1; i > Math.max(0, n - 20); i--) {
+    if (side === "LONG" && close[i - 1] > open[i - 1] && close[i] < open[i]) {
+      const obLow = low[i];
+      const obHigh = high[i];
+      if (obLow <= current && current <= obHigh) return { low: obLow, high: obHigh };
+    }
+    if (side === "SHORT" && close[i - 1] < open[i - 1] && close[i] > open[i]) {
+      const obLow = low[i];
+      const obHigh = high[i];
+      if (obLow <= current && current <= obHigh) return { low: obLow, high: obHigh };
+    }
+  }
+  return null;
+}
 
-  const eqh = clusterEqualLevels(highs, EQH_TOLERANCE).filter((l) => n1 - 1 - l.lastIdx <= EQH_RECENCY);
-  const eql = clusterEqualLevels(lows, EQH_TOLERANCE).filter((l) => n1 - 1 - l.lastIdx <= EQH_RECENCY);
-  if (!eqh.length && !eql.length) return null;
+function isObFvgValid(frame, side, ob, fvg) {
+  if (!ob && !fvg) return false;
+  const atrVal = lastNonNull(frame.atr) ?? 0;
+  const n = frame.n;
+  const current = frame.close[n - 1];
+  const hi = frame.high[n - 1];
+  const lo = frame.low[n - 1];
+  if (ob) {
+    if (side === "LONG" && current > ob.high) return false;
+    if (side === "SHORT" && current < ob.low) return false;
+    if (side === "LONG" && hi > ob.high + OB_FVG_MIN_ATR * (atrVal || 1)) return false;
+    if (side === "SHORT" && lo < ob.low - OB_FVG_MIN_ATR * (atrVal || 1)) return false;
+  }
+  if (fvg) {
+    if (side === "LONG" && current < fvg.low) return false;
+    if (side === "SHORT" && current > fvg.high) return false;
+  }
+  return true;
+}
 
-  const n = p15.close.length;
-  const lastHigh15 = p15.high[n - 1];
-  const lastLow15 = p15.low[n - 1];
-  const lastClose15 = p15.close[n - 1];
-  const rejection = lastCandleRejection(p15);
-  if (!rejection) return null;
+function smcReversal(frame) {
+  if (!frame || frame.n < CLOSED_COUNT) return [];
+  const n = frame.n;
+  const atrVal = lastNonNull(frame.atr) ?? 0;
+  const { longSweeps, shortSweeps } = findSweeps(frame);
+  const out = [];
 
-  const price = p15.precio;
-  const atr = p15.atr || price * 0.005;
-
-  let dir = null, level = null, sweepExtreme = null;
-  for (const l of eql) {
-    if (lastLow15 < l.value && lastClose15 > l.value && Math.abs(price - l.value) / price <= 0.02) {
-      dir = "LONG";
-      level = l.value;
-      sweepExtreme = lastLow15;
+  const emit = (side, sweeps) => {
+    if (!sweeps.length) return;
+    const ob = findOb(frame, side);
+    const fvg = findFvg(frame, side);
+    if (!isObFvgValid(frame, side, ob, fvg)) return;
+    for (let s = sweeps.length - 1; s >= 0; s--) {
+      const sweep = sweeps[s];
+      if (!detectChoch(frame, side, sweep.idx, sweep.price)) continue;
+      const entry = frame.close[n - 1];
+      const sl = side === "LONG"
+        ? Math.min(sweep.price, sliceMin(frame.low, n - 3, n)) - 0.25 * atrVal
+        : Math.max(sweep.price, sliceMax(frame.high, n - 3, n)) + 0.25 * atrVal;
+      let score = 25;
+      let prob = 0.30;
+      const reasons = [`Sweep ${side === "LONG" ? "de mínimos" : "de máximos"} (${sweep.price.toFixed(8)}) + CHoCH`];
+      if (ob) {
+        score += 10;
+        prob += 0.05;
+        reasons.push(`OB no mitigado (${ob.low.toFixed(8)}-${ob.high.toFixed(8)})`);
+      }
+      if (fvg) {
+        score += 15;
+        prob += 0.10;
+        reasons.push(`FVG no mitigado (${fvg.size.toFixed(8)})`);
+      }
+      out.push({
+        strategy: "SMC_Reversal",
+        signal: side,
+        score,
+        prob: Math.min(0.95, prob),
+        entry,
+        suggestedSlPrice: sl,
+        atr: atrVal,
+        targetPrice: null,
+        reasons,
+        details: {
+          sweep_price: sweep.price,
+          choch: true,
+          ob,
+          fvg,
+          atr: atrVal,
+          structure_quality: "ob_fvg_zone"
+        }
+      });
       break;
     }
+  };
+
+  emit("LONG", longSweeps);
+  emit("SHORT", shortSweeps);
+  return out;
+}
+
+function inFibZone(frame, side) {
+  const { close, high, low } = frame;
+  const n = frame.n;
+  const price = close[n - 1];
+  const hp = detectPivots(high, TREND_PIVOT_WINDOW, TREND_PIVOT_WINDOW);
+  const lp = detectPivots(low, TREND_PIVOT_WINDOW, TREND_PIVOT_WINDOW);
+  if (!hp.highs.length || !lp.lows.length) return false;
+  if (side === "LONG") {
+    const [highIdx, lastHigh] = hp.highs[hp.highs.length - 1];
+    const priorLows = lp.lows.filter((p) => p[0] < highIdx);
+    if (!priorLows.length) return false;
+    const lastLow = priorLows[priorLows.length - 1][1];
+    if (!(lastHigh > lastLow)) return false;
+    const [zoneLo, zoneHi] = fibonacciZone(lastLow, lastHigh);
+    return price >= zoneLo && price <= zoneHi;
   }
-  if (!dir) {
-    for (const l of eqh) {
-      if (lastHigh15 > l.value && lastClose15 < l.value && Math.abs(price - l.value) / price <= 0.02) {
-        dir = "SHORT";
-        level = l.value;
-        sweepExtreme = lastHigh15;
+  const [lowIdx, lastLow] = lp.lows[lp.lows.length - 1];
+  const priorHighs = hp.highs.filter((p) => p[0] < lowIdx);
+  if (!priorHighs.length) return false;
+  const lastHigh = priorHighs[priorHighs.length - 1][1];
+  if (!(lastHigh > lastLow)) return false;
+  const [zoneLo, zoneHi] = fibonacciZone(lastLow, lastHigh);
+  return price >= zoneLo && price <= zoneHi;
+}
+
+function nearEmaZone(frame) {
+  const n = frame.n;
+  const { ema20, ema50, high, low } = frame;
+  if (ema20 == null || ema50 == null) return false;
+  const zoneLow = Math.min(ema20, ema50);
+  const zoneHigh = Math.max(ema20, ema50);
+  return low[n - 1] <= zoneHigh && high[n - 1] >= zoneLow;
+}
+
+function rejectionCandle(frame, side) {
+  const n = frame.n;
+  const o = frame.open[n - 1];
+  const c = frame.close[n - 1];
+  const h = frame.high[n - 1];
+  const l = frame.low[n - 1];
+  const range = h - l;
+  if (range <= 0) return false;
+  if (side === "LONG") {
+    const lowerWick = Math.min(o, c) - l;
+    return lowerWick / range >= 0.5 && c > o;
+  }
+  const upperWick = h - Math.max(o, c);
+  return upperWick / range >= 0.5 && c < o;
+}
+
+function trendPullback(frame) {
+  if (!frame || frame.n < CLOSED_COUNT) return [];
+  const n = frame.n;
+  const { close, high, low, ema20, ema50, ema200 } = frame;
+  if (ema20 == null || ema50 == null || ema200 == null) return [];
+  const price = close[n - 1];
+  const atrVal = lastNonNull(frame.atr) ?? 0;
+  const out = [];
+
+  const emit = (side) => {
+    const trendUp = ema20 > ema50 && ema50 > ema200 && price > ema20;
+    const trendDown = ema20 < ema50 && ema50 < ema200 && price < ema20;
+    if (side === "LONG" && !trendUp) return;
+    if (side === "SHORT" && !trendDown) return;
+    const inFib = inFibZone(frame, side);
+    const nearEma = nearEmaZone(frame);
+    if (!(inFib || nearEma)) return;
+    const rejection = rejectionCandle(frame, side);
+    if (!rejection) return;
+    const entry = price;
+    const sl = side === "LONG"
+      ? sliceMin(low, n - 8, n) - 1.0 * atrVal
+      : sliceMax(high, n - 8, n) + 1.0 * atrVal;
+    let score = 25;
+    let prob = 0.30;
+    const reasons = [`Tendencia ${side === "LONG" ? "alcista" : "bajista"} EMA20/50/200 (15m) + pullback`];
+    if (inFib && nearEma) {
+      prob += 0.05;
+      reasons.push("Zona Fib 0.618-0.786 + zona EMA20/50");
+    } else if (inFib) {
+      reasons.push("Retroceso Fib 0.618-0.786");
+    } else {
+      reasons.push("Precio en zona EMA20/50");
+    }
+    reasons.push("Vela de rechazo (mecha >= 50%)");
+    out.push({
+      strategy: "Trend_Pullback",
+      signal: side,
+      score,
+      prob: Math.min(0.95, prob),
+      entry,
+      suggestedSlPrice: sl,
+      atr: atrVal,
+      targetPrice: null,
+      reasons,
+      details: {
+        in_fib: inFib,
+        near_ema: nearEma,
+        rejection,
+        atr: atrVal,
+        structure_quality: "swing_zone"
+      }
+    });
+  };
+
+  emit("LONG");
+  emit("SHORT");
+  return out;
+}
+
+function volumeProfile24(high, low, volume) {
+  const allPrices = [];
+  const allVolumes = [];
+  for (let i = 0; i < high.length; i++) {
+    const lo = low[i];
+    const hi = high[i];
+    const vol = volume[i];
+    if (!(vol > 0) || !(hi > lo)) continue;
+    const step = (hi - lo) / VP_BINS;
+    for (let b = 0; b < VP_BINS; b++) {
+      allPrices.push(lo + step * (b + 0.5));
+      allVolumes.push(vol / VP_BINS);
+    }
+  }
+  if (allPrices.length < 10) return null;
+  let priceMin = Infinity;
+  let priceMax = -Infinity;
+  for (const p of allPrices) {
+    if (p < priceMin) priceMin = p;
+    if (p > priceMax) priceMax = p;
+  }
+  if (!(priceMax > priceMin)) return null;
+
+  const binEdges = [];
+  for (let b = 0; b <= VP_BINS; b++) {
+    binEdges.push(priceMin + ((priceMax - priceMin) * b) / VP_BINS);
+  }
+  const binVolumes = new Array(VP_BINS).fill(0);
+  for (let k = 0; k < allPrices.length; k++) {
+    const p = allPrices[k];
+    for (let b = 0; b < VP_BINS; b++) {
+      if (p >= binEdges[b] && p < binEdges[b + 1]) {
+        binVolumes[b] += allVolumes[k];
         break;
       }
     }
   }
-  if (!dir) return null;
 
-  const wickOk = dir === "LONG" ? rejection.lowerWickRatio >= WICK_MIN_RATIO : rejection.upperWickRatio >= WICK_MIN_RATIO;
-  if (!wickOk) return null;
+  let pocIdx = 0;
+  for (let b = 1; b < VP_BINS; b++) {
+    if (binVolumes[b] > binVolumes[pocIdx]) pocIdx = b;
+  }
+  const poc = (binEdges[pocIdx] + binEdges[pocIdx + 1]) / 2;
 
-  const last3Low = Math.min(...p15.low.slice(-3));
-  const last3High = Math.max(...p15.high.slice(-3));
-  const suggestedSlPrice = dir === "LONG"
-    ? Math.min(sweepExtreme, last3Low) - 0.25 * atr
-    : Math.max(sweepExtreme, last3High) + 0.25 * atr;
+  const order = binVolumes.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v || b.i - a.i).map((x) => x.i).reverse();
+  const totalVol = binVolumes.reduce((a, b) => a + b, 0);
+  if (!(totalVol > 0)) return null;
+  const areaPrices = [];
+  let acc = 0;
+  for (const idx of order) {
+    acc += binVolumes[idx];
+    areaPrices.push((binEdges[idx] + binEdges[idx + 1]) / 2);
+    if (acc / totalVol >= VP_VALUE_AREA) break;
+  }
+  if (!areaPrices.length) return null;
 
-  let score = 60;
-  const reasons = [`Liquidity grab ${dir === "LONG" ? "EQL" : "EQH"} (${level.toFixed(8)}) con rechazo ${(dir === "LONG" ? rejection.lowerWickRatio : rejection.upperWickRatio).toFixed(2)}`];
-  if (dir === "LONG" && p15.rsi != null && p15.rsi < 40) { score += 10; reasons.push("RSI 15m sobrevendido"); }
-  if (dir === "SHORT" && p15.rsi != null && p15.rsi > 60) { score += 10; reasons.push("RSI 15m sobrecomprado"); }
-
-  return {
-    strategy: "Liquidity_Grab",
-    signal: dir,
-    score: Math.min(score, 100),
-    prob: Math.min(score, 100),
-    reasons,
-    suggestedSlPrice,
-    entry: p15.precio,
-    atr,
-    structure: true,
-    rvol: rvolOf(p15)
-  };
+  const vah = percentile(areaPrices, 90);
+  const val = percentile(areaPrices, 10);
+  const avgVol = mean(binVolumes);
+  return { poc, vah, val, avgVol, binVolumes, binEdges };
 }
 
-function rsiDivergence(pool) {
-  const p15 = pool.p15;
-  if (!p15 || !p15.close || p15.close.length < RSI_WINDOW + 12) return null;
+function binIndexOf(binEdges, price) {
+  let cnt = 0;
+  for (const e of binEdges) {
+    if (e <= price) cnt++;
+    else break;
+  }
+  return Math.max(0, Math.min(cnt - 1, binEdges.length - 2));
+}
 
-  const { close, high, low } = p15;
-  const n = close.length;
-  const atr = p15.atr || close[n - 1] * 0.005;
-  const rsiArr = calculateRSIArray(close, RSI_WINDOW);
+function vpMeanRevert(frame) {
+  if (!frame || frame.n < CLOSED_COUNT) return [];
+  const n = frame.n;
+  const start = Math.max(0, n - VP_LOOKBACK);
+  const vp = volumeProfile24(
+    frame.high.slice(start),
+    frame.low.slice(start),
+    frame.volume.slice(start)
+  );
+  if (!vp) return [];
+  const close = frame.close[n - 1];
+  const atrVal = lastNonNull(frame.atr) ?? 0;
+  const binIdx = binIndexOf(vp.binEdges, close);
+  const currentBinVol = vp.binVolumes[binIdx] ?? 0;
+  const isLvn = vp.avgVol > 0 && currentBinVol < vp.avgVol * LVN_THRESHOLD;
+  const volSlice = frame.volume.slice(Math.max(0, n - 20));
+  const rvol = n >= 20 && mean(volSlice) > 0 ? frame.volume[n - 1] / mean(volSlice) : 1.0;
+  const out = [];
 
-  const priceLows = pivotIndices(low, PIVOT_LEFT, PIVOT_RIGHT, "low");
-  const priceHighs = pivotIndices(high, PIVOT_LEFT, PIVOT_RIGHT, "high");
-  const rsiLows = pivotIndices(rsiArr, PIVOT_LEFT, PIVOT_RIGHT, "low", true);
-  const rsiHighs = pivotIndices(rsiArr, PIVOT_LEFT, PIVOT_RIGHT, "high", true);
+  const emit = (side) => {
+    const outsideBelow = close < vp.val;
+    const outsideAbove = close > vp.vah;
+    if (side === "LONG" && !(outsideBelow && isLvn && atrVal > 0)) return;
+    if (side === "SHORT" && !(outsideAbove && isLvn && atrVal > 0)) return;
+    const minBuffer = Math.max(1.0 * atrVal, (close * SL_MIN_BUFFER_PCT) / 100.0);
+    const sl = side === "LONG"
+      ? Math.min(close, vp.val) - minBuffer
+      : Math.max(close, vp.vah) + minBuffer;
+    const reasons = [
+      `Precio ${side === "LONG" ? `bajo VAL (${vp.val.toFixed(8)})` : `sobre VAH (${vp.vah.toFixed(8)})`} + LVN`
+    ];
+    out.push({
+      strategy: "VP_Mean_Revert",
+      signal: side,
+      score: 25,
+      prob: 0.30,
+      entry: close,
+      suggestedSlPrice: sl,
+      atr: atrVal,
+      targetPrice: vp.poc,
+      reasons,
+      details: {
+        poc: vp.poc,
+        vah: vp.vah,
+        val: vp.val,
+        outside: side === "LONG" ? "below" : "above",
+        lvn: isLvn,
+        atr: atrVal,
+        rvol,
+        structure_quality: "vp_zone"
+      }
+    });
+  };
 
-  const nearestWithin = (target, arr, tol) => {
-    let best = null, bestDist = Infinity;
-    for (const i of arr) {
-      const d = Math.abs(i - target);
-      if (d < bestDist) { bestDist = d; best = i; }
+  emit("LONG");
+  emit("SHORT");
+  return out;
+}
+
+function breakout(frame) {
+  if (!frame || frame.n < CLOSED_COUNT) return [];
+  const n = frame.n;
+  const { high, low, close, open, volume } = frame;
+  const atrVal = lastNonNull(frame.atr.slice(0, n - 1)) ?? 0;
+
+  const rangeHigh = sliceMax(high, n - 1 - CONSOLIDATION_MIN, n - 1);
+  const rangeLow = sliceMin(low, n - 1 - CONSOLIDATION_MIN, n - 1);
+  const rangeMid = (rangeHigh + rangeLow) / 2;
+
+  const volFrom = n - 2 - VOLUME_AVG_WINDOW;
+  const volTo = n - 2;
+  if (volFrom < 0) return [];
+  const avgVol = mean(volume.slice(volFrom, volTo));
+  const trigger = n - 1;
+  const rvol = avgVol > 0 ? volume[trigger] / avgVol : 0;
+  const volOk = rvol >= VOLUME_MULTIPLIER;
+
+  const entry = close[trigger];
+  const out = [];
+
+  const slFor = (side) => {
+    const broken = side === "LONG" ? rangeHigh : rangeLow;
+    const dist = Math.abs(entry - broken);
+    if (side === "LONG") {
+      return dist >= ATR_SL_THRESHOLD * atrVal ? broken - 0.25 * atrVal : rangeMid - 0.25 * atrVal;
     }
-    return bestDist <= tol ? best : null;
+    return dist >= ATR_SL_THRESHOLD * atrVal ? broken + 0.25 * atrVal : rangeMid + 0.25 * atrVal;
   };
 
-  let dir = null, pivotIdx = null;
+  const emit = (side) => {
+    const brokenOut = side === "LONG" ? entry > rangeHigh : entry < rangeLow;
+    if (!brokenOut || !volOk) return;
+    let prob = 0.30;
+    const reasons = [
+      `Breakout ${side === "LONG" ? "alcista" : "bajista"} (${entry.toFixed(8)}) ${side === "LONG" ? ">" : "<"} rango (${(side === "LONG" ? rangeHigh : rangeLow).toFixed(8)})`,
+      `Volumen ${rvol.toFixed(1)}x media`
+    ];
+    if (rvol >= 2.0) {
+      prob += 0.05;
+      reasons.push("Volumen >= 2x");
+    }
+    out.push({
+      strategy: "Breakout",
+      signal: side,
+      score: 35,
+      prob: Math.min(0.95, prob),
+      entry,
+      suggestedSlPrice: slFor(side),
+      atr: atrVal,
+      targetPrice: null,
+      reasons,
+      details: {
+        range_high: rangeHigh,
+        range_low: rangeLow,
+        rvol,
+        atr: atrVal,
+        structure_quality: "vp_zone"
+      }
+    });
+  };
+
+  emit("LONG");
+  emit("SHORT");
+  return out;
+}
+
+function findEqualLevels(values, tolerance) {
+  const levels = [];
+  for (let i = 0; i < values.length; i++) {
+    for (let j = i + 1; j < values.length; j++) {
+      if (values[i] > 0 && Math.abs(values[j] - values[i]) / values[i] < tolerance) {
+        levels.push(values[i]);
+      }
+    }
+  }
+  return levels;
+}
+
+function wickRatio(frame, side) {
+  const n = frame.n;
+  const o = frame.open[n - 1];
+  const c = frame.close[n - 1];
+  const h = frame.high[n - 1];
+  const l = frame.low[n - 1];
+  const range = h - l;
+  if (range <= 0) return 0;
+  return side === "LONG"
+    ? (Math.min(o, c) - l) / range
+    : (h - Math.max(o, c)) / range;
+}
+
+function liquidityGrab(frame) {
+  if (!frame || frame.n < CLOSED_COUNT) return [];
+  const n = frame.n;
+  const baseEnd = n - 1;
+  const atrVal = lastNonNull(frame.atr.slice(0, baseEnd)) ?? 0;
+
+  const recStart = Math.max(0, baseEnd - EQH_RECENCY);
+  const recHighs = frame.high.slice(recStart, baseEnd);
+  const recLows = frame.low.slice(recStart, baseEnd);
+  const eqhs = findEqualLevels(recHighs, EQH_TOLERANCE);
+  const eqls = findEqualLevels(recLows, EQH_TOLERANCE);
+  if (!eqhs.length && !eqls.length) return [];
+
+  const trigger = n - 1;
+  const entry = frame.close[trigger];
+  const out = [];
+
+  const emitLong = () => {
+    for (const eql of eqls) {
+      if (frame.low[trigger] < eql && frame.close[trigger] > eql) {
+        const wick = wickRatio(frame, "LONG");
+        if (wick >= WICK_MIN_RATIO) {
+          const sweepLow = frame.low[trigger];
+          const recentLow = sliceMin(frame.low, baseEnd - 3, baseEnd);
+          const minBuffer = Math.max(1.0 * atrVal, (entry * SL_MIN_BUFFER_PCT) / 100.0);
+          const sl = Math.min(Math.min(sweepLow, recentLow) - 0.25 * atrVal, entry - minBuffer);
+          out.push({
+            strategy: "Liquidity_Grab",
+            signal: "LONG",
+            score: 25,
+            prob: 0.30,
+            entry,
+            suggestedSlPrice: sl,
+            atr: atrVal,
+            targetPrice: null,
+            reasons: [`Liquidity grab EQL (${eql.toFixed(8)}) con rechazo ${wick.toFixed(2)}`],
+            details: { eq_level: eql, wick_ratio: wick, atr: atrVal, structure_quality: "swing_zone" }
+          });
+          break;
+        }
+      }
+    }
+  };
+
+  const emitShort = () => {
+    for (const eqh of eqhs) {
+      if (frame.high[trigger] > eqh && frame.close[trigger] < eqh) {
+        const wick = wickRatio(frame, "SHORT");
+        if (wick >= WICK_MIN_RATIO) {
+          const sweepHigh = frame.high[trigger];
+          const recentHigh = sliceMax(frame.high, baseEnd - 3, baseEnd);
+          const minBuffer = Math.max(1.0 * atrVal, (entry * SL_MIN_BUFFER_PCT) / 100.0);
+          const sl = Math.max(Math.max(sweepHigh, recentHigh) + 0.25 * atrVal, entry + minBuffer);
+          out.push({
+            strategy: "Liquidity_Grab",
+            signal: "SHORT",
+            score: 25,
+            prob: 0.30,
+            entry,
+            suggestedSlPrice: sl,
+            atr: atrVal,
+            targetPrice: null,
+            reasons: [`Liquidity grab EQH (${eqh.toFixed(8)}) con rechazo ${wick.toFixed(2)}`],
+            details: { eq_level: eqh, wick_ratio: wick, atr: atrVal, structure_quality: "swing_zone" }
+          });
+          break;
+        }
+      }
+    }
+  };
+
+  emitLong();
+  emitShort();
+  return out;
+}
+
+function alignedPivot(pivots, targetIdx) {
+  if (!pivots.length) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const p of pivots) {
+    const d = Math.abs(p[0] - targetIdx);
+    if (d < bestDist) { bestDist = d; best = p; }
+  }
+  return bestDist <= PIVOT_INDEX_TOLERANCE ? best : null;
+}
+
+function rsiDivergence(frame) {
+  if (!frame || frame.n < CLOSED_COUNT) return [];
+  const n = frame.n;
+  const { close, high, low, rsi, atr } = frame;
+  const priceHighs = detectPivots(high, PIVOT_LEFT, PIVOT_RIGHT).highs;
+  const priceLows = detectPivots(low, PIVOT_LEFT, PIVOT_RIGHT).lows;
+  const rsiPivots = detectPivots(rsi, PIVOT_LEFT, PIVOT_RIGHT);
+  const atrVal = lastNonNull(atr) ?? 0;
+  const lastIdx = n - 1;
+  const out = [];
+
   if (priceLows.length >= 2) {
-    const a = priceLows[priceLows.length - 2], b = priceLows[priceLows.length - 1];
-    const priceLL = low[b] < low[a];
-    const rsiA = rsiArr[a], rsiB = rsiArr[b];
-    const rsiHL = rsiA != null && rsiB != null && rsiB > rsiA;
-    const recent = n - 1 - b <= CONFIRM_CANDLES + PIVOT_RIGHT + 2;
-    const aligned = nearestWithin(b, rsiLows, PIVOT_ALIGNMENT) != null;
-    if (priceLL && rsiHL && recent && aligned) { dir = "LONG"; pivotIdx = b; }
-  }
-  if (!dir && priceHighs.length >= 2) {
-    const a = priceHighs[priceHighs.length - 2], b = priceHighs[priceHighs.length - 1];
-    const priceHH = high[b] > high[a];
-    const rsiA = rsiArr[a], rsiB = rsiArr[b];
-    const rsiLH = rsiA != null && rsiB != null && rsiB < rsiA;
-    const recent = n - 1 - b <= CONFIRM_CANDLES + PIVOT_RIGHT + 2;
-    const aligned = nearestWithin(b, rsiHighs, PIVOT_ALIGNMENT) != null;
-    if (priceHH && rsiLH && recent && aligned) { dir = "SHORT"; pivotIdx = b; }
-  }
-  if (!dir) return null;
-
-  const swingLow = Math.min(...low.slice(-8));
-  const swingHigh = Math.max(...high.slice(-8));
-  const suggestedSlPrice = dir === "LONG" ? swingLow - 1.0 * atr : swingHigh + 1.0 * atr;
-
-  let score = 60;
-  const reasons = [`Divergencia regular ${dir === "LONG" ? "alcista (LL precio + HL RSI)" : "bajista (HH precio + LH RSI)"}`];
-  if (dir === "LONG" && p15.rsi != null && p15.rsi < 40) { score += 10; reasons.push("RSI 15m sobrevendido"); }
-  if (dir === "SHORT" && p15.rsi != null && p15.rsi > 60) { score += 10; reasons.push("RSI 15m sobrecomprado"); }
-  if (p15.macd) {
-    if (dir === "LONG" && p15.macd.histogram > 0) { score += 5; reasons.push("MACD 15m positivo"); }
-    if (dir === "SHORT" && p15.macd.histogram < 0) { score += 5; reasons.push("MACD 15m negativo"); }
+    const [aIdx, aPrice] = priceLows[priceLows.length - 2];
+    const [bIdx, bPrice] = priceLows[priceLows.length - 1];
+    const hl1 = alignedPivot(rsiPivots.lows, aIdx);
+    const hl2 = alignedPivot(rsiPivots.lows, bIdx);
+    const confirmIdx = bIdx + CONFIRM_CANDLES;
+    const fresh = lastIdx - confirmIdx >= 0 && lastIdx - confirmIdx <= CONFIRM_CANDLES;
+    if (hl1 && hl2 && fresh && bPrice < aPrice && hl2[1] > hl1[1]) {
+      const entry = close[lastIdx];
+      const sl = sliceMin(low, n - 8, n) - 1.0 * atrVal;
+      out.push({
+        strategy: "RSI_Divergence",
+        signal: "LONG",
+        score: 35,
+        prob: 0.30,
+        entry,
+        suggestedSlPrice: sl,
+        atr: atrVal,
+        targetPrice: null,
+        reasons: ["Divergencia regular alcista (LL precio + HL RSI)"],
+        details: {
+          pivot_price_ll: bPrice,
+          pivot_rsi_hl: hl2[1],
+          atr: atrVal,
+          structure_quality: "swing_zone"
+        }
+      });
+    }
   }
 
-  return {
-    strategy: "RSI_Divergence",
-    signal: dir,
-    score: Math.min(score, 100),
-    prob: Math.min(score, 100),
-    reasons,
-    suggestedSlPrice,
-    entry: p15.precio,
-    atr,
-    structure: pivotIdx != null,
-    rvol: rvolOf(p15)
-  };
+  if (priceHighs.length >= 2) {
+    const [aIdx, aPrice] = priceHighs[priceHighs.length - 2];
+    const [bIdx, bPrice] = priceHighs[priceHighs.length - 1];
+    const lh1 = alignedPivot(rsiPivots.highs, aIdx);
+    const lh2 = alignedPivot(rsiPivots.highs, bIdx);
+    const confirmIdx = bIdx + CONFIRM_CANDLES;
+    const fresh = lastIdx - confirmIdx >= 0 && lastIdx - confirmIdx <= CONFIRM_CANDLES;
+    if (lh1 && lh2 && fresh && bPrice > aPrice && lh2[1] < lh1[1]) {
+      const entry = close[lastIdx];
+      const sl = sliceMax(high, n - 8, n) + 1.0 * atrVal;
+      out.push({
+        strategy: "RSI_Divergence",
+        signal: "SHORT",
+        score: 35,
+        prob: 0.30,
+        entry,
+        suggestedSlPrice: sl,
+        atr: atrVal,
+        targetPrice: null,
+        reasons: ["Divergencia regular bajista (HH precio + LH RSI)"],
+        details: {
+          pivot_price_hh: bPrice,
+          pivot_rsi_lh: lh2[1],
+          atr: atrVal,
+          structure_quality: "swing_zone"
+        }
+      });
+    }
+  }
+
+  return out;
 }
 
 const ALL_STRATEGIES = [
@@ -651,16 +841,14 @@ const ALL_STRATEGIES = [
   rsiDivergence
 ];
 
-export function evaluateStrategies(ohlcv1h, ohlcv15m, pool = null) {
-  const dataPool = pool || buildIndicatorPool(ohlcv1h, ohlcv15m);
-  if (!dataPool.p1h || !dataPool.p15) return [];
-
+export function evaluateStrategies(frame) {
+  if (!frame || frame.n < CLOSED_COUNT) return [];
   const results = [];
   for (const stratFn of ALL_STRATEGIES) {
     try {
-      const r = stratFn(dataPool);
-      if (r && r.signal !== "NEUTRAL" && r.score >= MIN_SCORE) {
-        results.push(r);
+      const signals = stratFn(frame);
+      for (const s of signals || []) {
+        if (s && s.signal !== "NEUTRAL") results.push(s);
       }
     } catch (e) {
       // skip strategy on error
@@ -669,97 +857,215 @@ export function evaluateStrategies(ohlcv1h, ohlcv15m, pool = null) {
   return results;
 }
 
-function applyContextBonus(results, marketState) {
-  if (!results.length) return results;
-  if (!marketState || !marketState.state || marketState.state === "unknown") return results;
-
-  const primary = PRIMARY_BY_STATE[marketState.state] || [];
-  if (!primary.length) return results;
-
-  return results.map((r) => {
-    const bonus = primary.includes(r.strategy) ? CONTEXT_BONUS_PRIMARY : CONTEXT_BONUS_UNIVERSAL;
-    return {
-      ...r,
-      score: Math.min(r.score + bonus, 100),
-      prob: Math.min(r.prob + bonus, 100)
-    };
-  });
+function inHours(hour, ranges) {
+  for (const rng of ranges || []) {
+    const [lo, hi] = rng;
+    if (hour >= lo && hour < hi) return true;
+  }
+  return false;
 }
 
-export function rankCandidates(results, marketState = null) {
-  if (!results.length) return [];
+export function effectiveThresholds(hourUtc = null) {
+  const hour = hourUtc == null ? new Date().getUTCHours() : hourUtc;
+  if (inHours(hour, SESSION_STRICT_HOURS_UTC)) {
+    return [SESSION_STRICT_MIN_SCORE, SESSION_STRICT_MIN_PROB, true];
+  }
+  return [MIN_SCORE, MIN_PROB, false];
+}
 
-  const regimeResults = filterByMarketRegime(results, marketState);
-  if (!regimeResults.length) return [];
-  const scored = applyContextBonus(regimeResults, marketState);
-  const candidates = [];
+export function isWeekendPause(now = new Date()) {
+  let dayIdx;
+  let hour;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Europe/Madrid",
+      weekday: "short",
+      hour: "numeric",
+      hour12: false
+    }).formatToParts(now);
+    const wd = parts.find((p) => p.type === "weekday")?.value;
+    hour = parseInt(parts.find((p) => p.type === "hour")?.value, 10);
+    dayIdx = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
+  } catch (e) {
+    dayIdx = now.getUTCDay();
+    hour = now.getUTCHours();
+  }
+  if (isNaN(hour)) return false;
+  if (dayIdx === 5 && hour >= 20) return true;
+  if (dayIdx === 6) return true;
+  if (dayIdx === 0 && hour < 7) return true;
+  return false;
+}
 
-  const buildCandidate = (side) => {
-    const signals = scored.filter((r) => r.signal === side);
-    if (!signals.length) return null;
+function weightFor(name) {
+  const w = STRATEGY_WEIGHTS[name];
+  return typeof w === "number" && !isNaN(w) ? w : 1.0;
+}
 
-    const n = signals.length;
-    const scoreSum = signals.reduce((a, r) => a + r.score, 0);
-    const ensembleBonus = 5 * (n - 1);
-    const finalScore = Math.min(100, scoreSum + ensembleBonus);
+function bestSignalOf(signals) {
+  return signals.reduce((b, s) => (s.score > b.score ? s : b), signals[0]);
+}
 
-    const weightSum = signals.reduce((a, r) => a + r.score, 0) || 1;
-    const entry = signals.reduce((a, r) => a + (r.entry ?? 0) * r.score, 0) / weightSum;
+function ensembleScore(signals) {
+  let base = 0;
+  for (const s of signals) base += s.score * weightFor(s.strategy);
+  return base + ENSEMBLE_BONUS * (signals.length - 1);
+}
 
-    const slPrices = signals.map((r) => r.suggestedSlPrice).filter((v) => v != null);
-    if (!slPrices.length) return null;
-    const sl = side === "LONG" ? Math.min(...slPrices) : Math.max(...slPrices);
+function ensembleProbability(signals, entry, sl) {
+  let prob = PROB_BASE;
+  const best = bestSignalOf(signals);
+  const details = best.details || {};
+  const structure = details.structure_quality;
+  if (structure === "vp_zone" || structure === "swing_zone" || structure === "ob_fvg_zone") {
+    prob += FACTOR_STRUCTURE;
+  }
+  const rvol = details.rvol ?? 0;
+  if (rvol > RVOL_HIGH_THRESHOLD) prob += FACTOR_VOLUME;
+  let slDistAtr = details.sl_dist_atr || 0;
+  if (!slDistAtr) {
+    const atr = parseFloat(details.atr) || 0;
+    if (atr > 0 && entry > 0) slDistAtr = Math.abs(entry - sl) / atr;
+  }
+  if (slDistAtr >= 1.0) prob += FACTOR_SL_DISTANCE;
+  if (signals.length >= 3) prob += FACTOR_CONFLUENCE;
+  const names = new Set(signals.map((s) => s.strategy));
+  if (QUALITY_STRATEGIES.some((q) => names.has(q))) prob += FACTOR_QUALITY;
+  return Math.max(0, Math.min(0.95, prob));
+}
 
-    let factors = 0;
-    if (signals.some((r) => r.structure)) factors += 0.05;
-    if (signals.some((r) => r.rvol != null && r.rvol > 1.5)) factors += 0.05;
-    const atr = signals[0]?.atr ?? null;
-    if (atr && Math.abs(entry - sl) >= 1.0 * atr) factors += 0.05;
-    if (n >= 3) factors += 0.05;
-
-    const probability = Math.min(95, finalScore + factors * 100);
-    if (finalScore < MIN_SCORE || probability < MIN_PROB) return null;
-
-    const best = signals.reduce((b, r) => (r.score > b.score ? r : b), signals[0]);
-
-    return {
-      direction: side,
-      bestStrategy: best.strategy,
-      bestSlPrice: sl,
-      entry,
-      targetPrice: best.targetPrice,
-      score: Math.round(finalScore),
-      probability: Math.round(probability),
-      allStrategies: signals.map((r) => ({
-        strategy: r.strategy,
-        score: r.score,
-        prob: r.prob,
-        reasons: r.reasons,
-        suggestedSlPrice: r.suggestedSlPrice
-      }))
-    };
+function buildCandidate(side, signals, hourUtc) {
+  const entry = mean(signals.map((s) => s.entry));
+  const sls = signals.map((s) => s.suggestedSlPrice).filter((v) => v != null);
+  if (!sls.length || !(entry > 0)) return null;
+  const sl = side === "LONG" ? Math.min(...sls) : Math.max(...sls);
+  const score = ensembleScore(signals);
+  const probability = ensembleProbability(signals, entry, sl);
+  const [minScore, minProb] = effectiveThresholds(hourUtc);
+  if (score < minScore || probability < minProb) return null;
+  const slDistPct = (Math.abs(entry - sl) / entry) * 100;
+  if (slDistPct < MIN_SL_DISTANCE_PCT || slDistPct > MAX_SL_DISTANCE_PCT) return null;
+  const best = bestSignalOf(signals);
+  return {
+    direction: side,
+    bestStrategy: best.strategy,
+    bestSlPrice: sl,
+    entry,
+    targetPrice: best.targetPrice ?? null,
+    score,
+    probability,
+    slDistPct,
+    allStrategies: signals.map((s) => ({
+      strategy: s.strategy,
+      signal: s.signal,
+      score: s.score,
+      prob: s.prob,
+      weight: weightFor(s.strategy),
+      reasons: s.reasons || [],
+      suggestedSlPrice: s.suggestedSlPrice,
+      details: s.details || {}
+    }))
   };
+}
 
-  const long = buildCandidate("LONG");
-  if (long) candidates.push(long);
-  const short = buildCandidate("SHORT");
-  if (short) candidates.push(short);
-
+export function rankCandidates(results, hourUtc = null) {
+  if (!results || !results.length) return [];
+  const groups = { LONG: [], SHORT: [] };
+  for (const r of results) {
+    if (r.signal === "LONG") groups.LONG.push(r);
+    else if (r.signal === "SHORT") groups.SHORT.push(r);
+  }
+  const candidates = [];
+  for (const side of ["LONG", "SHORT"]) {
+    if (!groups[side].length) continue;
+    const cand = buildCandidate(side, groups[side], hourUtc);
+    if (cand) candidates.push(cand);
+  }
   candidates.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     if (b.probability !== a.probability) return b.probability - a.probability;
-    return Math.abs(b.entry - b.bestSlPrice) - Math.abs(a.entry - a.bestSlPrice);
+    return b.slDistPct - a.slDistPct;
   });
   return candidates;
 }
 
+export function applyEntryFilters(candidates, ctx = {}) {
+  const notes = [];
+  let kept = [...candidates];
+
+  const qualitySet = new Set(QUALITY_STRATEGIES);
+  const beforeQuality = kept;
+  kept = kept.filter((c) => c.allStrategies.some((s) => qualitySet.has(s.strategy)));
+  for (const c of beforeQuality) {
+    if (!kept.includes(c)) {
+      notes.push(`${c.direction} sin estrategia de calidad (${c.allStrategies.map((s) => s.strategy).join(", ")})`);
+    }
+  }
+  if (!kept.length) return { kept, notes };
+
+  if (ctx.pairReturnPct != null) {
+    kept = kept.filter((c) => {
+      let ok;
+      if (ctx.isBtcQuote) {
+        ok = c.direction === "LONG" ? ctx.pairReturnPct >= 0 : ctx.pairReturnPct <= 0;
+      } else {
+        if (ctx.refReturnPct == null) return true;
+        const diff = ctx.pairReturnPct - ctx.refReturnPct;
+        ok = c.direction === "LONG" ? diff >= 0 : diff <= 0;
+      }
+      if (!ok) {
+        notes.push(`${c.direction} va en contra del mercado (retorno 4h ${ctx.pairReturnPct.toFixed(2)}%)`);
+      }
+      return ok;
+    });
+    if (!kept.length) return { kept, notes };
+  }
+
+  if (ctx.atrPct != null && ctx.atrPct > VOLATILITY_MAX_ATR_PCT) {
+    notes.push(`ATR 15m ${ctx.atrPct.toFixed(2)}% > máximo ${VOLATILITY_MAX_ATR_PCT}%`);
+    return { kept: [], notes };
+  }
+
+  const hour = ctx.hourUtc == null ? new Date().getUTCHours() : ctx.hourUtc;
+  if (inHours(hour, SESSION_BLOCK_HOURS_UTC)) {
+    notes.push(`franja ${String(hour).padStart(2, "0")} UTC bloqueada (00-12 UTC)`);
+    return { kept: [], notes };
+  }
+
+  if (ctx.recentMovePct != null) {
+    kept = kept.filter((c) => {
+      const adverse = c.direction === "LONG" ? -ctx.recentMovePct : ctx.recentMovePct;
+      const adverseAtr = ctx.atrPct ? adverse / ctx.atrPct : null;
+      const against = adverse > MOMENTUM_MAX_ADVERSE_PCT
+        || (adverseAtr != null && adverseAtr > MOMENTUM_MAX_ADVERSE_ATR);
+      if (against) {
+        const det = `${adverse.toFixed(2)}%${adverseAtr != null ? ` (${adverseAtr.toFixed(2)}xATR)` : ""}`;
+        notes.push(`${c.direction} movimiento en contra ${det} en ${MOMENTUM_LOOKBACK_CANDLES} velas 15m`);
+      }
+      return !against;
+    });
+  }
+
+  return { kept, notes };
+}
+
 export {
-  STRATEGY_LIST, MIN_SCORE, MIN_PROB,
-  SWEEP_LOOKBACK, CHOCH_WINDOW, OB_FVG_MIN_ATR,
-  FIB_LOW, FIB_HIGH, EMA_TOUCH_TOLERANCE,
+  STRATEGY_LIST, MIN_SCORE, MIN_PROB, ENSEMBLE_BONUS, PROB_BASE,
+  STRATEGY_WEIGHTS, QUALITY_STRATEGIES, CLOSED_COUNT,
+  SESSION_STRICT_MIN_SCORE, SESSION_STRICT_MIN_PROB,
+  MIN_SL_DISTANCE_PCT, MAX_SL_DISTANCE_PCT, SL_MIN_BUFFER_PCT,
+  VOLATILITY_MAX_ATR_PCT, MOMENTUM_LOOKBACK_CANDLES, MOMENTUM_MAX_ADVERSE_PCT,
+  MOMENTUM_MAX_ADVERSE_ATR, RELATIVE_STRENGTH_LOOKBACK_CANDLES,
+  SWEEP_PRIOR_WINDOW, SWEEP_LOOKBACK, CHOCH_WINDOW, OB_FVG_MIN_ATR,
   VP_BINS, VP_LOOKBACK, LVN_THRESHOLD,
-  CONSOLIDATION_MIN, VOLUME_MULTIPLIER,
+  CONSOLIDATION_MIN, VOLUME_MULTIPLIER, ATR_SL_THRESHOLD,
   EQH_LOOKBACK, EQH_RECENCY, WICK_MIN_RATIO, EQH_TOLERANCE,
-  RSI_WINDOW, PIVOT_LEFT, PIVOT_RIGHT, CONFIRM_CANDLES, PIVOT_ALIGNMENT,
-  smcReversal, trendPullback, vpMeanRevert, breakout, liquidityGrab, rsiDivergence
+  RSI_WINDOW, PIVOT_LEFT, PIVOT_RIGHT, CONFIRM_CANDLES, PIVOT_INDEX_TOLERANCE,
+  detectPivots,
+  smcReversal,
+  trendPullback,
+  vpMeanRevert,
+  breakout,
+  liquidityGrab,
+  rsiDivergence
 };

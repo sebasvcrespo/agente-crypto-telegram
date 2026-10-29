@@ -1,6 +1,10 @@
 import axios from "axios";
-import { buildIndicatorPool, classifyMarketState, evaluateStrategies, rankCandidates } from "./strategies.js";
-import { calculateLevels, applyLeverageCap, RISK_PERCENT, FEE_TOTAL } from "./riskManager.js";
+import {
+  buildFrame15m, dropFormingCandles, evaluateStrategies, rankCandidates, applyEntryFilters,
+  isWeekendPause, CLOSED_COUNT,
+  RELATIVE_STRENGTH_LOOKBACK_CANDLES, MOMENTUM_LOOKBACK_CANDLES
+} from "./strategies.js";
+import { calculateLevels, applyLeverageCap, RISK_PERCENT, FEE_TOTAL, TP_ALLOCATION } from "./riskManager.js";
 
 export const INTERNAL_MULTI_STRATEGY_LIST = [
   "BTC/USDT",
@@ -21,6 +25,9 @@ const PIONEX_INTERVALS = {
   "15m": "15M",
   "1h": "60M"
 };
+
+const REF_SYMBOL = "BTC/USDT";
+const REF_CACHE_TTL_MS = 120000;
 
 let bot = null;
 let getChatId = null;
@@ -43,7 +50,7 @@ export function symbolToPionex(symbol) {
 async function fetchPionexKlines(symbol, interval, limit = null) {
   const pionexSymbol = symbolToPionex(symbol);
   const pionexInterval = PIONEX_INTERVALS[interval] || "60M";
-  const effectiveLimit = limit || (interval === "15m" ? 100 : 450);
+  const effectiveLimit = limit || (interval === "15m" ? 201 : 450);
   const url = `https://api.pionex.com/api/v1/market/klines?symbol=${pionexSymbol}&interval=${pionexInterval}&limit=${effectiveLimit}`;
   const response = await axios.get(url, { timeout: 15000 });
   if (!response.data?.result || !response.data?.data?.klines) {
@@ -61,6 +68,12 @@ async function fetchPionexKlines(symbol, interval, limit = null) {
 
 function pairLabel(symbol) {
   return symbol.replace(/:(USDT|BTC)$/, "");
+}
+
+function symbolForPair(base) {
+  if (base.endsWith("/BTC")) return `${base.replace(/\/BTC$/, "")}/BTC:BTC`;
+  if (base.endsWith("/USDT")) return `${base}:USDT`;
+  return `${base}/USDT:USDT`;
 }
 
 async function fetchPionexRiskTable(symbol) {
@@ -81,6 +94,33 @@ async function fetchBtcUsd() {
   const response = await axios.get(url, { timeout: 15000 });
   const t = response.data?.data?.tickers?.[0];
   return t ? parseFloat(t.close) : null;
+}
+
+const refCache = { ts: 0, closes: null };
+
+async function fetchRefCloses() {
+  const now = Date.now();
+  if (refCache.closes && now - refCache.ts < REF_CACHE_TTL_MS) return refCache.closes;
+  try {
+    const rows = dropFormingCandles(await fetchPionexKlines(`${REF_SYMBOL}:USDT`, "15m", 40));
+    const closes = rows.map((k) => k[4]);
+    refCache.ts = now;
+    refCache.closes = closes;
+    return closes;
+  } catch (e) {
+    console.warn(`⚠️ Multi-estrategia interna: sin referencia ${REF_SYMBOL}: ${e.message}`);
+    refCache.ts = now;
+    refCache.closes = null;
+    return null;
+  }
+}
+
+function returnOverWindow(closes, lookback) {
+  if (!closes || closes.length < lookback + 1) return null;
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 1 - lookback];
+  if (!(prev > 0)) return null;
+  return ((last - prev) / prev) * 100;
 }
 
 function maxLeverageForNotional(riskTable, notionalUsd) {
@@ -104,34 +144,30 @@ function pct(entry, level, direction) {
   return `${signed.toFixed(3)}%`;
 }
 
-function formatMarketState(ms) {
-  if (!ms || !ms.state) return "";
-  const icon = ms.state === "trending" ? "📈" : ms.state === "lateral" ? "↔️" : "🟡";
-  const label = { trending: "TENDENCIA", lateral: "LATERAL", transitional: "TRANSICIONAL" }[ms.state] || ms.state;
-  const dir = ms.direction && ms.direction !== "neutral" ? ` ${ms.direction === "bullish" ? "alcista 🟢" : "bajista 🔴"}` : "";
-  const adxTxt = ms.adx != null ? ` | ADX(1H) ${ms.adx.toFixed(1)}` : "";
-  return `${icon} Contexto 1H: ${label}${dir}${adxTxt}\n`;
-}
-
-function formatWinnerMessage(w) {
+function formatWinnerMessage(w, extraNote = "") {
   const dirIcon = w.direction === "LONG" ? "🟢" : w.direction === "SHORT" ? "🔴" : "⚪";
   const bar = (score) => {
-    const filled = Math.max(1, Math.round(score / 10));
+    const filled = Math.min(10, Math.max(1, Math.round(score / 10)));
     return "█".repeat(filled).padEnd(10, "░");
   };
+  const alloc = w.levels.tpAllocation || TP_ALLOCATION;
 
-  let msg = `🧠 MULTI-ESTRATEGIA INTERNA (1H/15M)\n\n`;
+  let msg = `🧠 MULTI-ESTRATEGIA (15M)\n\n`;
+  if (extraNote) msg += `${extraNote}\n`;
   msg += `🏆 Par ganador: ${w.label}\n`;
-  msg += `${formatMarketState(w.marketState)}`;
   msg += `🎯 Estrategia ganadora: ${w.bestStrategy}\n`;
   msg += `📈 Dirección: ${w.direction} ${dirIcon}\n`;
-  msg += `⭐ Score: ${w.score} ${bar(w.score)}\n`;
-  msg += `🎲 Probabilidad: ${w.probability}%\n\n`;
+  msg += `⭐ Score: ${w.score.toFixed(1)} ${bar(w.score)}\n`;
+  msg += `🎲 Probabilidad: ${Math.round(w.probability * 100)}%\n\n`;
   msg += `💰 Entrada: ${fmtBtc(w.levels.entry)} BTC\n`;
   msg += `🛑 SL: ${fmtBtc(w.levels.sl)} BTC (${pct(w.levels.entry, w.levels.sl, w.direction)}) — ${w.levels.slAtrMult}×ATR(15m)\n`;
-  msg += `🎯 TP1 (60%): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
-  msg += `🎯 TP2 (40%): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
-  msg += `🔁 Tras TP1: cerrar 60% y mover el SL del 40% restante a BE neto (${w.direction === "LONG" ? "+0,50%" : "-0,50%"})\n\n`;
+  msg += `🎯 TP1 (${Math.round(alloc[0] * 100)}% @1R): ${fmtBtc(w.levels.tp1)} BTC (${pct(w.levels.entry, w.levels.tp1, w.direction)})\n`;
+  msg += `🎯 TP2 (${Math.round(alloc[1] * 100)}% @2R): ${fmtBtc(w.levels.tp2)} BTC (${pct(w.levels.entry, w.levels.tp2, w.direction)})\n`;
+  msg += `🎯 TP3 (${Math.round(alloc[2] * 100)}% @2.5R): ${fmtBtc(w.levels.tp3)} BTC (${pct(w.levels.entry, w.levels.tp3, w.direction)})\n`;
+  msg += `🔁 Gestión: tras TP1 cerrar ${Math.round(alloc[0] * 100)}% y mover SL a BE+ (${fmtBtc(w.levels.bePlus)}); tras TP2 cerrar ${Math.round(alloc[1] * 100)}% y mover SL al nivel TP1\n\n`;
+  if (w.targetPrice) {
+    msg += `📌 POC (objetivo VP, referencia): ${fmtBtc(w.targetPrice)} BTC\n\n`;
+  }
   msg += `💸 Fee total estimado: 0,50% (incluido en el cálculo de niveles y riesgo)\n`;
   msg += `⚙️ Apalancamiento sugerido: ${w.levels.leverage}x (máx 10x)${w.levels.exchangeMax ? ` — exchange ${w.levels.exchangeMax}x` : ""}\n`;
   msg += `📊 Riesgo (${(RISK_PERCENT * 100).toFixed(1)}% de capital): ${w.levels.riskBtc.toFixed(8)} BTC — nocional ${w.levels.notionalBtc.toFixed(8)} BTC\n`;
@@ -140,7 +176,8 @@ function formatWinnerMessage(w) {
   if (w.confluences && w.confluences.length) {
     msg += `🔁 Confluencias (ensemble):\n`;
     for (const c of w.confluences) {
-      msg += `• ${c.strategy} (${c.score}pts, ${c.prob}%)`;
+      const weight = typeof c.weight === "number" ? ` ×${c.weight}` : "";
+      msg += `• ${c.strategy} (${c.score}pts${weight})`;
       if (c.reasons && c.reasons.length) msg += ` — ${c.reasons[0]}`;
       msg += `\n`;
     }
@@ -168,50 +205,66 @@ function sendTelegram(text) {
 }
 
 async function analyzePair(base, btcUsd) {
-  let symbol;
-  if (base.endsWith("/BTC")) {
-    symbol = `${base.replace(/\/BTC$/, "")}/BTC:BTC`;
-  } else if (base.endsWith("/USDT")) {
-    symbol = `${base}:USDT`;
-  } else {
-    symbol = `${base}/USDT:USDT`;
-  }
-  let data1h = [], data15 = [];
+  const symbol = symbolForPair(base);
+  let data15 = [];
   try {
-    data1h = await fetchPionexKlines(symbol, "1h");
-  } catch (e) {
-    throw new Error(`klines 1h ${e.message}`);
-  }
-  try {
-    data15 = await fetchPionexKlines(symbol, "15m");
+    data15 = dropFormingCandles(await fetchPionexKlines(symbol, "15m", 201));
   } catch (e) {
     throw new Error(`klines 15m ${e.message}`);
   }
-  if (!data1h || data1h.length < 20 || !data15 || data15.length < 20) {
-    throw new Error(`datos insuficientes (1h=${data1h?.length}, 15m=${data15?.length})`);
+  if (!data15 || data15.length < CLOSED_COUNT) {
+    throw new Error(`datos insuficientes (15m=${data15?.length}, requiere ${CLOSED_COUNT} velas cerradas)`);
   }
 
-  const pool = buildIndicatorPool(data1h, data15);
-  const marketState = classifyMarketState(pool);
-  const results = evaluateStrategies(data1h, data15, pool);
-  const candidates = rankCandidates(results, marketState);
+  const closed = data15.slice(-CLOSED_COUNT);
+  const frame = buildFrame15m(closed);
+  const results = evaluateStrategies(frame);
+  if (!results.length) {
+    return { base, label: pairLabel(symbol), trade: false, reason: "sin señales de estrategias" };
+  }
 
+  const candidates = rankCandidates(results);
   if (!candidates.length) {
-    return { base, label: pairLabel(symbol), trade: false };
+    return { base, label: pairLabel(symbol), trade: false, reason: "descartado por score/prob/banda SL" };
   }
 
-  const best = candidates[0];
-  const atr15 = pool.p15.atr;
-  const entry = best.entry ?? pool.p15.precio;
-  const levels = calculateLevels(entry, atr15, best.direction, symbol, best.bestSlPrice, best.targetPrice);
+  const n = frame.n;
+  const closes = frame.close;
+  const atrLast = frame.atr[n - 1];
+  const atrPct = atrLast && closes[n - 1] > 0 ? (atrLast / closes[n - 1]) * 100 : null;
+  const recentMovePct = returnOverWindow(closes, MOMENTUM_LOOKBACK_CANDLES);
+  const pairReturnPct = returnOverWindow(closes, RELATIVE_STRENGTH_LOOKBACK_CANDLES);
+  const isBtcQuote = symbol.endsWith(":BTC");
+  const refCloses = isBtcQuote ? null : await fetchRefCloses();
+  const refReturnPct = refCloses ? returnOverWindow(refCloses, RELATIVE_STRENGTH_LOOKBACK_CANDLES) : null;
+
+  const { kept, notes } = applyEntryFilters(candidates, {
+    hourUtc: new Date().getUTCHours(),
+    atrPct,
+    recentMovePct,
+    pairReturnPct,
+    refReturnPct,
+    isBtcQuote
+  });
+  if (!kept.length) {
+    return { base, label: pairLabel(symbol), trade: false, reason: notes.join("; ") || "descartado por filtros de entrada" };
+  }
+
+  const best = kept[0];
+  const atr15 = atrLast ?? 0;
+  const entry = best.entry ?? frame.precio;
+  const levels = calculateLevels(entry, atr15, best.direction, symbol, best.bestSlPrice);
 
   if (!levels) {
     const sl = best.bestSlPrice;
     let reason = "niveles inválidos";
     if (entry && sl) {
       const r = Math.abs(entry - sl);
-      if (r > 0 && r / entry < FEE_TOTAL) {
-        reason = "TP1 no cubre las comisiones de Pionex (1% apertura+cierre)";
+      const distPct = (r / entry) * 100;
+      if (distPct < 1.0) reason = `SL a ${distPct.toFixed(2)}% < mínimo 1.0%`;
+      else if (distPct > 4.0) reason = `SL a ${distPct.toFixed(2)}% > máximo 4.0%`;
+      else if (r > 0 && r / entry < FEE_TOTAL) {
+        reason = "TP1 no cubre las comisiones de Pionex";
       }
     }
     return { base, label: pairLabel(symbol), trade: false, reason };
@@ -241,7 +294,7 @@ async function analyzePair(base, btcUsd) {
     bestStrategy: best.bestStrategy,
     score: best.score,
     probability: best.probability,
-    marketState,
+    targetPrice: best.targetPrice,
     levels,
     confluences: best.allStrategies
   };
@@ -253,7 +306,13 @@ export async function runInternalMultiStrategy(force = false) {
     return;
   }
 
-  console.log(`🔄 Iniciando análisis multi-estrategia INTERNO (${INTERNAL_MULTI_STRATEGY_LIST.length} pares, 1H contexto / 15M gatillo)...`);
+  const weekendPause = isWeekendPause(new Date());
+  if (weekendPause && !force) {
+    console.log("⏭️ Multi-estrategia interna saltado: pausa de fin de semana (Vie 20:00 → Dom 07:00 España)");
+    return;
+  }
+
+  console.log(`🔄 Iniciando análisis multi-estrategia INTERNO (${INTERNAL_MULTI_STRATEGY_LIST.length} pares, 15M velas cerradas)...`);
   const winners = [];
   const skipped = [];
   const errors = [];
@@ -269,7 +328,7 @@ export async function runInternalMultiStrategy(force = false) {
       const res = await analyzePair(base, btcUsd);
       if (res.trade) {
         winners.push(res);
-        console.log(`✅ ${res.label}: ${res.bestStrategy} ${res.direction} Score=${res.score} Prob=${res.probability}`);
+        console.log(`✅ ${res.label}: ${res.bestStrategy} ${res.direction} Score=${res.score.toFixed(1)} Prob=${(res.probability * 100).toFixed(0)}%`);
       } else if (res.reason) {
         skipped.push(`${res.label} → ${res.reason}`);
         console.log(`🚫 ${res.label}: ${res.reason}`);
@@ -283,10 +342,20 @@ export async function runInternalMultiStrategy(force = false) {
     await sleep(1200);
   }
 
+  const extraNote = weekendPause
+    ? "⏳ Pausa de fin de semana (Vie 20:00 → Dom 07:00 España) — señal informativa"
+    : "";
+
+  if (!force && !winners.length) {
+    console.log("📤 Multi-estrategia interna: sin señales válidas, sin mensaje a Telegram.");
+    return;
+  }
+
   try {
     let msg;
     if (!winners.length) {
-      msg = `🧠 MULTI-ESTRATEGIA INTERNA (1H/15M)\n\n❌ Sin oportunidades válidas`;
+      msg = `🧠 MULTI-ESTRATEGIA (15M)\n\n❌ Sin oportunidades válidas`;
+      if (extraNote) msg += `\n${extraNote}`;
       if (skipped.length) {
         msg += "\n\n🚫 Señales descartadas:";
         for (const s of skipped) msg += `\n• ${s}`;
@@ -304,7 +373,7 @@ export async function runInternalMultiStrategy(force = false) {
         return db - da;
       });
       const best = winners[0];
-      msg = formatWinnerMessage(best);
+      msg = formatWinnerMessage(best, extraNote);
       if (skipped.length) {
         msg += `\n\n🚫 Otras señales descartadas:`;
         for (const s of skipped) msg += `\n• ${s}`;

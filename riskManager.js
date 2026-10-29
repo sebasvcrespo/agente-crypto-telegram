@@ -2,6 +2,11 @@ let CAPITAL_BTC = 0.00010;
 const RISK_PERCENT = 0.10;
 const MAX_LEVERAGE = 10;
 const FEE_TOTAL = 0.005;
+const BE_PLUS_FEE = 0.0015;
+const TP1_R = 1.0;
+const TP2_R = 2.0;
+const TP3_R = 2.5;
+const TP_ALLOCATION = [0.20, 0.30, 0.50];
 
 function calcRiskBtc() {
   return CAPITAL_BTC * RISK_PERCENT;
@@ -28,22 +33,18 @@ function volatilityCategory(symbol) {
   return "MED";
 }
 
-export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlPrice, targetPrice = null) {
+export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlPrice) {
   if (!entryPrice || !suggestedSlPrice) return null;
 
   const isLong = direction === "LONG";
   const slDistance = Math.abs(entryPrice - suggestedSlPrice);
   const r = slDistance;
-  const tp1Mult = 1.0;
-  const tp2Mult = 1.7;
-  const tp3Mult = 2.5;
 
   const sl = suggestedSlPrice;
-  const structuralTp1 = isLong ? entryPrice + tp1Mult * r : entryPrice - tp1Mult * r;
-  const targetIsValid = targetPrice != null && (isLong ? targetPrice > entryPrice : targetPrice < entryPrice);
-  const tp1 = targetIsValid ? targetPrice : structuralTp1;
-  const tp2 = isLong ? entryPrice + tp2Mult * r : entryPrice - tp2Mult * r;
-  const tp3 = isLong ? entryPrice + tp3Mult * r : entryPrice - tp3Mult * r;
+  const tp1 = isLong ? entryPrice + TP1_R * r : entryPrice - TP1_R * r;
+  const tp2 = isLong ? entryPrice + TP2_R * r : entryPrice - TP2_R * r;
+  const tp3 = isLong ? entryPrice + TP3_R * r : entryPrice - TP3_R * r;
+  const bePlus = isLong ? entryPrice * (1 + BE_PLUS_FEE) : entryPrice * (1 - BE_PLUS_FEE);
 
   const validSlSide = isLong ? sl < entryPrice : sl > entryPrice;
   if (!validSlSide || slDistance <= 0) return null;
@@ -52,7 +53,7 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
   if (tp1Distance / entryPrice < FEE_TOTAL) return null;
 
   const slDistancePct = slDistance / entryPrice;
-  if (slDistancePct < 0.01 || slDistancePct > 0.03) return null;
+  if (slDistancePct < 0.01 || slDistancePct > 0.04) return null;
 
   const riskBtc = CAPITAL_BTC * RISK_PERCENT;
   const riskPctTotal = slDistancePct + FEE_TOTAL;
@@ -70,6 +71,9 @@ export function calculateLevels(entryPrice, atr, direction, symbol, suggestedSlP
     tp1,
     tp2,
     tp3,
+    bePlus,
+    tpAllocation: TP_ALLOCATION,
+    tpR: [TP1_R, TP2_R, TP3_R],
     riskBtc: actualRisk,
     notionalBtc,
     leverage,
@@ -103,4 +107,4 @@ export function applyLeverageCap(levels, maxLeverage) {
   };
 }
 
-export { CAPITAL_BTC, RISK_PERCENT, MAX_LEVERAGE, FEE_TOTAL };
+export { CAPITAL_BTC, RISK_PERCENT, MAX_LEVERAGE, FEE_TOTAL, BE_PLUS_FEE, TP1_R, TP2_R, TP3_R, TP_ALLOCATION };

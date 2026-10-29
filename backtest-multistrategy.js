@@ -1,5 +1,7 @@
 import axios from "axios";
-import { buildIndicatorPool, classifyMarketState, evaluateStrategies, rankCandidates } from "./strategies.js";
+import {
+  buildFrame15m, evaluateStrategies, rankCandidates, applyEntryFilters, isWeekendPause, CLOSED_COUNT
+} from "./strategies.js";
 import { calculateLevels } from "./riskManager.js";
 import { INTERNAL_MULTI_STRATEGY_LIST, symbolToPionex } from "./multiStrategyEngine.js";
 
@@ -7,6 +9,10 @@ const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const MIN15 = 15 * 60 * 1000;
 const PIONEX = "https://api.pionex.com/api/v1/market/klines";
+const TP_FRACTIONS = [0.20, 0.30, 0.50];
+const BE_PLUS_FEE = 0.0015;
+const RS_LOOKBACK = 16;
+const MOMENTUM_LOOKBACK = 4;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -101,7 +107,28 @@ function stopReached(direction, candle, level) {
   return direction === "LONG" ? candle[3] <= level : candle[2] >= level;
 }
 
-function simulateTrade(signal, candles15, startIndex, management = "original", fee = 0.005) {
+function returnOver(closes, lookback) {
+  if (closes.length < lookback + 1) return null;
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 1 - lookback];
+  if (!(prev > 0)) return null;
+  return ((last - prev) / prev) * 100;
+}
+
+function buildCtx(frame, hourUtc, refCloses, isBtcQuote) {
+  const n = frame.n;
+  const atrLast = frame.atr[n - 1];
+  return {
+    hourUtc,
+    atrPct: atrLast && frame.close[n - 1] > 0 ? (atrLast / frame.close[n - 1]) * 100 : null,
+    recentMovePct: returnOver(frame.close, MOMENTUM_LOOKBACK),
+    pairReturnPct: returnOver(frame.close, RS_LOOKBACK),
+    refReturnPct: refCloses ? returnOver(refCloses, RS_LOOKBACK) : null,
+    isBtcQuote
+  };
+}
+
+function simulateTrade(signal, candles15, startIndex, fee = 0.005) {
   const levels = signal.levels;
   const entryCandle = candles15[startIndex];
   if (!entryCandle) return { status: "NO_FUTURE_DATA" };
@@ -110,16 +137,11 @@ function simulateTrade(signal, candles15, startIndex, management = "original", f
   const rDistance = Math.abs(actualEntry - levels.sl);
   if (!actualEntry || !rDistance) return { status: "INVALID_ENTRY" };
 
-  const targets = management === "be-fees-60-40"
-    ? [
-      { price: levels.tp1, fraction: 0.60 },
-      { price: levels.tp2, fraction: 0.40 }
-    ]
-    : [
-      { price: levels.tp1, fraction: 0.33 },
-      { price: levels.tp2, fraction: 0.33 },
-      { price: levels.tp3, fraction: 0.34 }
-    ];
+  const targets = [
+    { price: levels.tp1, fraction: TP_FRACTIONS[0] },
+    { price: levels.tp2, fraction: TP_FRACTIONS[1] },
+    { price: levels.tp3, fraction: TP_FRACTIONS[2] }
+  ];
   let remaining = 1;
   let grossPnl = 0;
   let realizedR = 0;
@@ -132,12 +154,8 @@ function simulateTrade(signal, candles15, startIndex, management = "original", f
   let stop = levels.sl;
 
   const moveStopAfterTarget = (hitCount) => {
-    if (management === "original") return;
     if (hitCount === 1) {
-      if (management === "be-exact") stop = actualEntry;
-      if (management === "be-fees" || management === "be-fees-60-40") {
-        stop = signal.direction === "LONG" ? actualEntry * 1.005 : actualEntry * 0.995;
-      }
+      stop = signal.direction === "LONG" ? actualEntry * (1 + BE_PLUS_FEE) : actualEntry * (1 - BE_PLUS_FEE);
     } else if (hitCount === 2) {
       stop = levels.tp1;
     }
@@ -292,42 +310,50 @@ function peakDrawdown(values) {
   return drawdown;
 }
 
-async function runPair(base, startTime, endTime, management, shortsOnly = false) {
+function refClosesUpTo(refRows, time, lookback) {
+  if (!refRows || !refRows.length) return null;
+  const idx = candleAtOrBefore(refRows, time);
+  if (idx < lookback) return null;
+  return refRows.slice(idx - lookback, idx + 1).map((c) => c[4]);
+}
+
+async function runPair(base, startTime, endTime, refRows, shortsOnly = false) {
   const symbol = toSymbol(base);
-  const hours = Math.ceil((endTime - startTime) / HOUR) + 460;
-  const quarters = Math.ceil((endTime - startTime) / MIN15) + 120;
-  const [oneHour, fifteen] = await Promise.all([
-    fetchHistory(symbol, "60M", hours, endTime),
-    fetchHistory(symbol, "15M", quarters, Math.min(endTime, Math.floor(Date.now() / MIN15) * MIN15 - MIN15))
-  ]);
+  const quarters = Math.ceil((endTime - startTime) / MIN15) + 260;
+  const fifteen = await fetchHistory(symbol, "15M", quarters, Math.min(endTime, Math.floor(Date.now() / MIN15) * MIN15 - MIN15));
 
   const byStrategy = {};
   const byDirection = { LONG: emptyStats(), SHORT: emptyStats() };
   const stats = emptyStats();
   const equityCurve = [];
   const signalDetails = [];
-  const firstHour = Math.max(startTime, oneHour[0]?.[0] ?? startTime);
+  const firstTime = Math.max(startTime, fifteen[0]?.[0] ?? startTime);
 
-  for (let time = firstHour; time <= endTime; time += HOUR) {
-    const i1 = candleAtOrBefore(oneHour, time);
+  for (let time = firstTime; time <= endTime; time += HOUR) {
     const i15 = candleAtOrBefore(fifteen, time);
-    if (i1 < 200 || i15 < 100) continue;
+    if (i15 < CLOSED_COUNT - 1) continue;
+    if (isWeekendPause(new Date(time))) continue;
 
-    const data1h = oneHour.slice(Math.max(0, i1 - 449), i1 + 1);
-    const data15 = fifteen.slice(Math.max(0, i15 - 99), i15 + 1);
-    const pool = buildIndicatorPool(data1h, data15);
-    const marketState = classifyMarketState(pool);
-    const results = evaluateStrategies(data1h, data15, pool);
-    const candidates = rankCandidates(results, marketState);
+    const data15 = fifteen.slice(Math.max(0, i15 - CLOSED_COUNT + 1), i15 + 1);
+    const frame = buildFrame15m(data15);
+    const hourUtc = new Date(time).getUTCHours();
+    const results = evaluateStrategies(frame);
+    if (!results.length) continue;
+    const candidates = rankCandidates(results, hourUtc);
     if (!candidates.length) continue;
 
-    const best = candidates[0];
+    const isBtcQuote = symbol.endsWith(":BTC");
+    const ctx = buildCtx(frame, hourUtc, refClosesUpTo(refRows, time, RS_LOOKBACK), isBtcQuote);
+    const { kept } = applyEntryFilters(candidates, ctx);
+    if (!kept.length) continue;
+
+    const best = kept[0];
     if (shortsOnly && best.direction !== "SHORT") continue;
-    const levels = calculateLevels(best.entry ?? pool.p15.precio, pool.p15.atr, best.direction, symbol, best.bestSlPrice, best.targetPrice);
+    const levels = calculateLevels(best.entry ?? frame.precio, frame.atr[frame.n - 1] ?? 0, best.direction, symbol, best.bestSlPrice);
     if (!levels) continue;
 
     const entryIndex = candleIndexAfter(fifteen, time);
-    const trade = simulateTrade({ ...best, levels }, fifteen, entryIndex, management);
+    const trade = simulateTrade({ ...best, levels }, fifteen, entryIndex);
     if (trade.status === "NO_FUTURE_DATA" || trade.status === "INVALID_ENTRY") continue;
     addTrade(stats, trade);
     addTrade(byDirection[best.direction], trade);
@@ -338,9 +364,8 @@ async function runPair(base, startTime, endTime, management, shortsOnly = false)
       time,
       direction: best.direction,
       strategy: best.bestStrategy,
-      score: best.score,
-      probability: best.probability,
-      marketState: marketState.state,
+      score: Number(best.score.toFixed(1)),
+      probability: Number(best.probability.toFixed(2)),
       entrySignal: levels.entry,
       entryActual: trade.actualEntry,
       sl: levels.sl,
@@ -354,11 +379,9 @@ async function runPair(base, startTime, endTime, management, shortsOnly = false)
     });
   }
 
-  const result = {
+  return {
     pair: base,
-    management,
     shortsOnly,
-    candles1h: oneHour.length,
     candles15m: fifteen.length,
     signals: finalizeStats(stats),
     byDirection: Object.fromEntries(Object.entries(byDirection).map(([k, v]) => [k, finalizeStats(v)])),
@@ -366,52 +389,55 @@ async function runPair(base, startTime, endTime, management, shortsOnly = false)
     drawdownR: peakDrawdown(equityCurve),
     details: signalDetails
   };
-  return result;
 }
 
 async function loadPortfolioData(startTime, endTime) {
   const data = {};
+  process.stdout.write("DESCARGANDO BTC/USDT (referencia RS) ... ");
+  const refRows = await fetchHistory("BTC/USDT:USDT", "15M",
+    Math.ceil((endTime - startTime) / MIN15) + RS_LOOKBACK + 20, endTime);
+  console.log(`${refRows.length} velas 15M`);
   for (const base of INTERNAL_MULTI_STRATEGY_LIST) {
     const symbol = toSymbol(base);
-    const hours = Math.ceil((endTime - startTime) / HOUR) + 460;
-    const quarters = Math.ceil((endTime - startTime) / MIN15) + 120;
+    const quarters = Math.ceil((endTime - startTime) / MIN15) + 260;
     process.stdout.write(`DESCARGANDO ${base} ... `);
-    const [oneHour, fifteen] = await Promise.all([
-      fetchHistory(symbol, "60M", hours, endTime),
-      fetchHistory(symbol, "15M", quarters, Math.min(endTime, Math.floor(Date.now() / MIN15) * MIN15 - MIN15))
-    ]);
-    data[base] = { symbol, oneHour, fifteen };
-    console.log(`${oneHour.length} velas 1H, ${fifteen.length} velas 15M`);
+    const fifteen = await fetchHistory(symbol, "15M", quarters,
+      Math.min(endTime, Math.floor(Date.now() / MIN15) * MIN15 - MIN15));
+    data[base] = { symbol, fifteen };
+    console.log(`${fifteen.length} velas 15M`);
   }
-  return data;
+  return { data, refRows };
 }
 
-function buildPortfolioCandidates(data, startTime, endTime, allowedStrategies = null) {
+function buildPortfolioCandidates(data, refRows, startTime, endTime, allowedStrategies = null) {
   const candidates = new Map();
   for (const [base, market] of Object.entries(data)) {
     const rows = [];
-    const firstHour = Math.max(startTime, market.oneHour[0]?.[0] ?? startTime);
-    for (let time = firstHour; time <= endTime; time += HOUR) {
-      const i1 = candleAtOrBefore(market.oneHour, time - HOUR);
+    const firstTime = Math.max(startTime, market.fifteen[0]?.[0] ?? startTime);
+    for (let time = firstTime; time <= endTime; time += HOUR) {
       const i15 = candleAtOrBefore(market.fifteen, time - MIN15);
-      if (i1 < 200 || i15 < 100) continue;
-      const data1h = market.oneHour.slice(Math.max(0, i1 - 449), i1 + 1);
-      const data15 = market.fifteen.slice(Math.max(0, i15 - 99), i15 + 1);
-      const pool = buildIndicatorPool(data1h, data15);
-      const marketState = classifyMarketState(pool);
-      const evaluated = evaluateStrategies(data1h, data15, pool);
+      if (i15 < CLOSED_COUNT - 1) continue;
+      if (isWeekendPause(new Date(time))) continue;
+      const data15 = market.fifteen.slice(Math.max(0, i15 - CLOSED_COUNT + 1), i15 + 1);
+      const frame = buildFrame15m(data15);
+      const hourUtc = new Date(time).getUTCHours();
+      const evaluated = evaluateStrategies(frame);
       const filtered = allowedStrategies
         ? evaluated.filter((result) => allowedStrategies.includes(result.strategy))
         : evaluated;
-      const ranked = rankCandidates(filtered, marketState);
+      const ranked = rankCandidates(filtered, hourUtc);
       if (!ranked.length) continue;
-      const best = ranked[0];
-      const levels = calculateLevels(best.entry ?? pool.p15.precio, pool.p15.atr,
-        best.direction, market.symbol, best.bestSlPrice, best.targetPrice);
+      const isBtcQuote = market.symbol.endsWith(":BTC");
+      const ctx = buildCtx(frame, hourUtc, refClosesUpTo(refRows, time - MIN15, RS_LOOKBACK), isBtcQuote);
+      const { kept } = applyEntryFilters(ranked, ctx);
+      if (!kept.length) continue;
+      const best = kept[0];
+      const levels = calculateLevels(best.entry ?? frame.precio, frame.atr[frame.n - 1] ?? 0,
+        best.direction, market.symbol, best.bestSlPrice);
       if (!levels) continue;
       const entryIndex = candleIndexAfter(market.fifteen, time);
       if (entryIndex >= market.fifteen.length) continue;
-      rows.push({ time, base, marketState, best, levels, entryIndex });
+      rows.push({ time, base, best, levels, entryIndex });
     }
     candidates.set(base, rows);
     console.log(`SEÑALES ${base}: ${rows.length}`);
@@ -431,9 +457,8 @@ function addPortfolioTrade(stats, base, candidate, trade) {
     direction: candidate.best.direction,
     strategy: candidate.best.bestStrategy,
     strategies: (candidate.best.allStrategies || []).map((item) => item.strategy),
-    score: candidate.best.score,
-    probability: candidate.best.probability,
-    marketState: candidate.marketState.state,
+    score: Number(candidate.best.score.toFixed(1)),
+    probability: Number(candidate.best.probability.toFixed(2)),
     result: trade.reason,
     netPnlPct: trade.netPnl * 100,
     resultR: trade.realizedR,
@@ -444,12 +469,11 @@ function addPortfolioTrade(stats, base, candidate, trade) {
   stats.maxDrawdown = Math.min(stats.maxDrawdown, stats.equity - stats.peak);
 }
 
-async function runPortfolio(data, candidates, startTime, endTime, management, shortsOnly, fee) {
+async function runPortfolio(data, candidates, startTime, endTime, shortsOnly, fee) {
   const stats = emptyPortfolioStats();
   const byPair = {};
   const byStrategy = {};
   const byDirection = { LONG: emptyStats(), SHORT: emptyStats() };
-  const byRegime = {};
   const all = [];
   for (const [base, rows] of candidates) {
     byPair[base] = emptyStats();
@@ -462,14 +486,11 @@ async function runPortfolio(data, candidates, startTime, endTime, management, sh
   for (const candidate of all) {
     if (candidate.time < availableAt) continue;
     const trade = simulateTrade({ ...candidate.best, levels: candidate.levels }, data[candidate.base].fifteen,
-      candidate.entryIndex, management, fee);
+      candidate.entryIndex, fee);
     if (trade.status === "NO_FUTURE_DATA" || trade.status === "INVALID_ENTRY") continue;
     addPortfolioTrade(stats, candidate.base, candidate, trade);
     addTrade(byPair[candidate.base], trade);
     addTrade(byDirection[candidate.best.direction], trade);
-    const regime = candidate.marketState.state || "unknown";
-    byRegime[regime] ||= emptyStats();
-    addTrade(byRegime[regime], trade);
     for (const strategy of candidate.best.allStrategies?.map((item) => item.strategy) || []) {
       byStrategy[strategy] ||= emptyStats();
       addTrade(byStrategy[strategy], trade);
@@ -477,7 +498,6 @@ async function runPortfolio(data, candidates, startTime, endTime, management, sh
     availableAt = trade.exitTime || endTime + MIN15;
   }
   return {
-    management,
     shortsOnly,
     fee,
     signals: finalizeStats(stats),
@@ -485,7 +505,6 @@ async function runPortfolio(data, candidates, startTime, endTime, management, sh
     pairs: Object.fromEntries(Object.entries(byPair).map(([pair, value]) => [pair, finalizeStats(value)])),
     strategies: Object.fromEntries(Object.entries(byStrategy).map(([strategy, value]) => [strategy, finalizeStats(value)])),
     directions: Object.fromEntries(Object.entries(byDirection).map(([direction, value]) => [direction, finalizeStats(value)])),
-    regimes: Object.fromEntries(Object.entries(byRegime).map(([regime, value]) => [regime, finalizeStats(value)])),
     trades: stats.trades
   };
 }
@@ -514,16 +533,17 @@ function compact(result) {
 async function main() {
   const backtestDays = Number(process.env.BACKTEST_DAYS || 30);
   const latest15 = Math.floor(Date.now() / MIN15) * MIN15 - MIN15;
-  const latest1h = Math.floor(Date.now() / HOUR) * HOUR - HOUR;
-  const endTime = latest1h;
+  const endTime = latest15;
   const startTime = endTime - backtestDays * DAY;
   const report = {
     generatedAt: new Date().toISOString(),
     period: { start: new Date(startTime).toISOString(), end: new Date(endTime).toISOString() },
     methodology: {
-      signal: "cierre 1H con 100 velas 15M y 450 velas 1H de contexto",
+      signal: "15M velas cerradas, ventana de 200 velas (paridad AgenteKucoin)",
       entry: "apertura de la primera vela 15M posterior",
-      management: "una sola posicion global; 33/33/34 y 60/40 con break-even",
+      management: "una sola posicion global; TP 20/30/50 a 1R/2R/2.5R, BE+ 0.15% tras TP1, SL a TP1 tras TP2",
+      filters: "gate calidad, fuerza relativa vs BTC, volatilidad ATR<=0.6%, franja 00-12 UTC bloqueada, anti-momentum, pausa fin de semana, banda SL 1%-4%",
+      thresholds: "MIN_SCORE 35 ponderado / MIN_PROB 0.45 (estrictos 50/0.55 en 00-12 UTC)",
       ambiguousCandle: "SL primero",
       fees: "0.50% total por operacion",
       levels: "niveles absolutos calculados al precio de la señal"
@@ -532,16 +552,16 @@ async function main() {
   };
 
   console.log(`Backtest ${report.period.start} -> ${report.period.end}`);
-  const data = await loadPortfolioData(startTime, endTime);
+  const { data, refRows } = await loadPortfolioData(startTime, endTime);
   const scenarios = [
-    ["be-fees-60-40", "ENSEMBLE_60_40_BE", false, null],
-    ["be-fees-60-40", "SMC_ONLY_60_40_BE", false, ["SMC_Reversal"]],
-    ["be-fees-60-40", "SMC_RSI_60_40_BE", false, ["SMC_Reversal", "RSI_Divergence"]],
-    ["be-fees-60-40", "SMC_LIQUIDITY_60_40_BE", false, ["SMC_Reversal", "Liquidity_Grab"]]
+    [null, "ENSEMBLE_20_30_50"],
+    [["SMC_Reversal"], "SMC_ONLY_20_30_50"],
+    [["SMC_Reversal", "RSI_Divergence"], "SMC_RSI_20_30_50"],
+    [["SMC_Reversal", "Liquidity_Grab"], "SMC_LIQUIDITY_20_30_50"]
   ];
-  for (const [management, label, shortsOnly, allowedStrategies] of scenarios) {
-    const candidates = buildPortfolioCandidates(data, startTime, endTime, allowedStrategies);
-    const result = await runPortfolio(data, candidates, startTime, endTime, management, shortsOnly, 0.005);
+  for (const [allowedStrategies, label] of scenarios) {
+    const candidates = buildPortfolioCandidates(data, refRows, startTime, endTime, allowedStrategies);
+    const result = await runPortfolio(data, candidates, startTime, endTime, false, 0.005);
     report.scenarios[label] = result;
     console.log(`${label}: ${result.signals.signals} operaciones, ${result.signals.netPnlPct.toFixed(3)}% neto, DD ${result.maxDrawdownPct.toFixed(3)}%`);
   }
