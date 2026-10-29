@@ -302,7 +302,7 @@ async function analyzePair(base, btcUsd) {
 
 export async function runInternalMultiStrategy(force = false) {
   if (!force && (getBotStatus?.() === "Cerrado" || !getChatId?.())) {
-    console.log(`⏭️ Multi-estrategia interna saltado: status="${getBotStatus?.()}", chatId="${getChatId?.()}"`);
+    console.log(`⏭️ Multi-estrategia interna saltado: status="${getBotStatus?.()}", chatId="${getChatId?.()}" (escribe *Abierto* en Telegram para registrar el chat tras un deploy)`);
     return;
   }
 

@@ -53,7 +53,8 @@ function loadState() {
 
 const state = loadState();
 let botStatus = state.botStatus || "Abierto";
-let chatId = state.chatId || null;
+const envChatId = Number(process.env.TELEGRAM_CHAT_ID);
+let chatId = state.chatId || (Number.isFinite(envChatId) && envChatId !== 0 ? envChatId : null);
 let capitalBtc = state.capitalBtc || 0.00010;
 
 function saveState() {
